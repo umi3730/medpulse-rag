@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # coding: utf-8
 """
-GraphRAG 配置：复用 qa_system 共享配置，新增检索/生成参数和提示词。
+GraphRAG 配置：复用 KBQA 共享配置，新增检索/生成参数和提示词。
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-# 复用 qa_system 的共享配置
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "qa_system"))
+# 复用 KBQA 的共享配置
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "KBQA"))
 from config import (  # noqa: E402, F401
     NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
     OLLAMA_MODEL, OLLAMA_BASE_URL,

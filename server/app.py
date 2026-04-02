@@ -18,8 +18,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# 把 qa_system 和 graphrag 加入 sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "qa_system"))
+# 把 KBQA 和 graphrag 加入 sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "KBQA"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "graphrag"))
 
 from server.models import (

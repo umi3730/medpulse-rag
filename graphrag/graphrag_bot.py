@@ -126,7 +126,7 @@ class GraphRAGBot:
             empty["debug"]["total_time_ms"] = round((time.time() - t0) * 1000, 1)
             return empty
 
-        # Stage 2: 实体归一化（复用 qa_system 的 EntityNormalizer）
+        # Stage 2: 实体归一化（复用 KBQA 的 EntityNormalizer）
         normalized = self.normalizer.normalize(raw_entities, has_negation=False)
         entity_dict = normalized["entity_dict"]
 
