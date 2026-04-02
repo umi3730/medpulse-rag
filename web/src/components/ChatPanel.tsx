@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { sendChat } from '@/api/client'
-import type { ChatMessage } from '@/types'
+import { streamChat } from '@/api/client'
+import type { ChatMessage, DebugInfo, GraphData } from '@/types'
 import { Send, Loader2 } from 'lucide-react'
 
 interface Props {
@@ -21,7 +21,7 @@ export default function ChatPanel({ onResponse }: Props) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     const q = input.trim()
     if (!q || loading) return
 
@@ -30,26 +30,71 @@ export default function ChatPanel({ onResponse }: Props) {
     setInput('')
     setLoading(true)
 
+    // 先插入空的 assistant 消息，后续流式追加
+    const botIdx = { current: -1 }
+    setMessages(prev => {
+      botIdx.current = prev.length
+      return [...prev, { role: 'assistant', content: '' }]
+    })
+
+    let debugInfo: DebugInfo | undefined
+    let graphData: GraphData | undefined
+
     try {
-      const res = await sendChat(q)
-      const botMsg: ChatMessage = {
-        role: 'assistant',
-        content: res.answer,
-        debug: res.debug,
-        graph_data: res.graph_data,
-      }
-      setMessages(prev => [...prev, botMsg])
-      onResponse(botMsg)
+      await streamChat(q, {
+        onRetrieval(data) {
+          debugInfo = data.debug as DebugInfo
+          graphData = data.graph_data
+          // 立即推送 debug + graph_data
+          onResponse({ role: 'assistant', content: '', debug: debugInfo, graph_data: graphData })
+        },
+        onDelta(chunk) {
+          setMessages(prev => {
+            const updated = [...prev]
+            const msg = updated[botIdx.current]
+            if (msg) updated[botIdx.current] = { ...msg, content: msg.content + chunk }
+            return updated
+          })
+        },
+        onDone(data) {
+          setMessages(prev => {
+            const updated = [...prev]
+            const msg = updated[botIdx.current]
+            if (msg) {
+              updated[botIdx.current] = {
+                ...msg,
+                content: data.answer || msg.content,
+                debug: debugInfo,
+                graph_data: graphData,
+              }
+            }
+            return updated
+          })
+        },
+        onError(err) {
+          setMessages(prev => {
+            const updated = [...prev]
+            updated[botIdx.current] = {
+              role: 'assistant',
+              content: `请求失败: ${err.message}`,
+            }
+            return updated
+          })
+        },
+      })
     } catch (e) {
-      const errMsg: ChatMessage = {
-        role: 'assistant',
-        content: `请求失败: ${e instanceof Error ? e.message : '未知错误'}`,
-      }
-      setMessages(prev => [...prev, errMsg])
+      setMessages(prev => {
+        const updated = [...prev]
+        updated[botIdx.current] = {
+          role: 'assistant',
+          content: `请求失败: ${e instanceof Error ? e.message : '未知错误'}`,
+        }
+        return updated
+      })
     } finally {
       setLoading(false)
     }
-  }
+  }, [input, loading, onResponse])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

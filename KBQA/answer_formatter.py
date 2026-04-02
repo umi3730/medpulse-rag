@@ -195,3 +195,44 @@ class AnswerFormatter:
         except Exception as e:
             log.debug("LLM 润色失败: %s", e)
             return ""
+
+    def stream_format(self, result_groups: list[dict]):
+        """流式格式化：template 模式直接 yield 完整文本；llm 模式逐 chunk 流式润色。"""
+        parts = []
+        for group in result_groups:
+            question_type = group["question_type"]
+            answers = group["answers"]
+            text = self._template_format(question_type, answers)
+            if text:
+                parts.append(text)
+
+        if not parts:
+            return
+
+        combined = "\n".join(parts)
+
+        if self.mode == "llm" and self.llm and HAS_LANGCHAIN_CORE:
+            # 流式 LLM 润色
+            messages = [
+                SystemMessage(content=POLISH_SYSTEM_PROMPT),
+                HumanMessage(content=combined),
+            ]
+            in_think = False
+            try:
+                for chunk in self.llm.stream(messages):
+                    text = chunk.content or ""
+                    if "<think>" in text:
+                        in_think = True
+                    if in_think:
+                        if "</think>" in text:
+                            in_think = False
+                            text = text.split("</think>", 1)[1]
+                        else:
+                            continue
+                    if text:
+                        yield text
+            except Exception as e:
+                log.debug("LLM 流式润色失败: %s，降级到模板", e)
+                yield combined
+        else:
+            yield combined

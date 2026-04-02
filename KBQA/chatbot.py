@@ -133,6 +133,69 @@ class ChatBot:
             "graph_data": graph_data,
         }
 
+    def chat_stream(self, question: str):
+        """
+        流式问答接口，yield SSE 事件 dict：
+          {"event": "retrieval", "data": {debug, graph_data}}
+          {"event": "delta",     "data": {"chunk": str}}
+          {"event": "done",      "data": {"answer": str, "total_time_ms": float}}
+        """
+        import time
+
+        t0 = time.time()
+        question = question.strip()
+        if not question:
+            return
+
+        # Step 1: 语义分析
+        intents, entity_dict, level = self._analyze(question)
+        if not intents or not entity_dict:
+            yield {"event": "done", "data": {"answer": DEFAULT_ANSWER, "total_time_ms": 0}}
+            return
+
+        # Step 2: Cypher 生成
+        query_groups = self.cypher_gen.generate(intents, entity_dict)
+        cypher_queries = []
+        for g in query_groups:
+            for q in g["queries"]:
+                cypher_queries.append({"cypher": q["cypher"], "params": q["params"]})
+
+        if not query_groups:
+            yield {"event": "done", "data": {"answer": DEFAULT_ANSWER, "total_time_ms": 0}}
+            return
+
+        # Step 3: 执行查询
+        results = self.graph_query.execute(query_groups)
+        result_count = sum(len(r["answers"]) for r in results)
+
+        # Step 4: 提取图谱数据
+        graph_data = self._extract_graph_data(results)
+
+        # yield retrieval 事件
+        debug_info = {
+            "level": level,
+            "intents": intents,
+            "entities": entity_dict,
+            "cypher_queries": cypher_queries,
+            "result_count": result_count,
+        }
+        yield {
+            "event": "retrieval",
+            "data": {"debug": debug_info, "graph_data": graph_data},
+        }
+
+        # Step 5: 流式格式化
+        full_answer = ""
+        for chunk in self.formatter.stream_format(results):
+            full_answer += chunk
+            yield {"event": "delta", "data": {"chunk": chunk}}
+
+        if not full_answer:
+            full_answer = DEFAULT_ANSWER
+
+        total_time = round((time.time() - t0) * 1000, 1)
+        yield {"event": "done", "data": {"answer": full_answer, "total_time_ms": total_time}}
+
     # ==================================================================
     # 图谱数据提取（供前端可视化）
     # ==================================================================

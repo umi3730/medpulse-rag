@@ -180,6 +180,73 @@ class GraphRAGBot:
             "graph_data": graph_data,
         }
 
+    def chat_stream(self, question: str):
+        """
+        流式问答接口，yield SSE 事件 dict：
+          {"event": "retrieval", "data": {debug, graph_data, mode}}
+          {"event": "delta",     "data": {"chunk": str}}
+          {"event": "done",      "data": {"answer": str, "total_time_ms": float}}
+        """
+        import json as _json
+
+        t0 = time.time()
+        question = question.strip()
+        if not question:
+            return
+
+        # Stage 1: 实体抽取
+        raw_entities = self.extractor.extract(question)
+        if not raw_entities:
+            yield {"event": "done", "data": {"answer": DEFAULT_ANSWER, "total_time_ms": 0}}
+            return
+
+        # Stage 2: 实体归一化
+        normalized = self.normalizer.normalize(raw_entities, has_negation=False)
+        entity_dict = normalized["entity_dict"]
+        if not entity_dict:
+            yield {"event": "done", "data": {"answer": DEFAULT_ANSWER, "total_time_ms": 0}}
+            return
+
+        # Stage 3: 多跳子图检索
+        subgraph = self.retriever.retrieve(entity_dict)
+
+        # Stage 4: 上下文组装
+        context_result = self.context_builder.build(subgraph)
+
+        # 构建图谱可视化数据
+        graph_data = self._build_graph_data(subgraph)
+
+        # yield retrieval 事件（检索完成，立即推送 debug + 图谱）
+        debug_info = {
+            "entities_raw": raw_entities,
+            "entities_normalized": entity_dict,
+            "subgraph_stats": subgraph["stats"],
+            "context_preview": context_result["context_preview"],
+            "context_char_count": context_result["char_count"],
+            "generation_time_ms": 0,
+            "model_used": "pending",
+            "total_time_ms": 0,
+        }
+        yield {
+            "event": "retrieval",
+            "data": {"debug": debug_info, "graph_data": graph_data, "mode": "graphrag"},
+        }
+
+        # Stage 5: 流式 LLM 生成
+        full_answer = ""
+        for chunk in self.generator.stream(question, context_result["context_text"]):
+            if isinstance(chunk, dict):
+                # 生成结束的元数据
+                break
+            full_answer += chunk
+            yield {"event": "delta", "data": {"chunk": chunk}}
+
+        if not full_answer:
+            full_answer = DEFAULT_ANSWER
+
+        total_time = round((time.time() - t0) * 1000, 1)
+        yield {"event": "done", "data": {"answer": full_answer, "total_time_ms": total_time}}
+
     @staticmethod
     def _build_graph_data(subgraph: dict) -> dict:
         """将子图转换为前端力导向图格式。"""

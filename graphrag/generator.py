@@ -69,3 +69,35 @@ class GraphRAGGenerator:
                 "generation_time_ms": round(elapsed, 1),
                 "model_used": "error",
             }
+
+    def stream(self, question: str, context_text: str):
+        """流式生成回答，yield 文本 chunk；最后 yield dict 表示结束。"""
+        if not self.available or not context_text:
+            return
+
+        system_prompt = GENERATION_SYSTEM_PROMPT.format(context=context_text)
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=question),
+        ]
+
+        t0 = time.time()
+        in_think = False
+        try:
+            for chunk in self.llm.stream(messages):
+                text = chunk.content or ""
+                if "<think>" in text:
+                    in_think = True
+                if in_think:
+                    if "</think>" in text:
+                        in_think = False
+                        text = text.split("</think>", 1)[1]
+                    else:
+                        continue
+                if text:
+                    yield text
+        except Exception as e:
+            log.error("GraphRAG 流式生成失败: %s", e)
+
+        elapsed = round((time.time() - t0) * 1000, 1)
+        yield {"generation_time_ms": elapsed, "model_used": getattr(self.llm, "model", "unknown")}

@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { sendGraphRAGChat } from '@/api/client'
-import type { GraphRAGChatMessage } from '@/types'
+import { streamGraphRAGChat } from '@/api/client'
+import type { GraphRAGChatMessage, GraphRAGDebugInfo, GraphData } from '@/types'
 import { Send, Loader2 } from 'lucide-react'
 
 interface Props {
@@ -22,7 +22,7 @@ export default function GraphRAGChatPanel({ onResponse }: Props) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     const q = input.trim()
     if (!q || loading) return
 
@@ -31,27 +31,80 @@ export default function GraphRAGChatPanel({ onResponse }: Props) {
     setInput('')
     setLoading(true)
 
+    // 先插入空的 assistant 消息
+    const botIdx = { current: -1 }
+    setMessages(prev => {
+      botIdx.current = prev.length
+      return [...prev, { role: 'assistant', content: '' }]
+    })
+
+    let debugInfo: GraphRAGDebugInfo | undefined
+    let graphData: GraphData | undefined
+    let mode: string | undefined
+
     try {
-      const res = await sendGraphRAGChat(q)
-      const botMsg: GraphRAGChatMessage = {
-        role: 'assistant',
-        content: res.answer,
-        debug: res.debug,
-        graph_data: res.graph_data,
-        mode: res.mode,
-      }
-      setMessages(prev => [...prev, botMsg])
-      onResponse(botMsg)
+      await streamGraphRAGChat(q, {
+        onRetrieval(data) {
+          debugInfo = data.debug as GraphRAGDebugInfo
+          graphData = data.graph_data
+          mode = data.mode
+          // 立即更新 mode 标签 + 推送 debug/graph
+          setMessages(prev => {
+            const updated = [...prev]
+            const msg = updated[botIdx.current]
+            if (msg) updated[botIdx.current] = { ...msg, mode, debug: debugInfo, graph_data: graphData }
+            return updated
+          })
+          onResponse({ role: 'assistant', content: '', debug: debugInfo, graph_data: graphData, mode })
+        },
+        onDelta(chunk) {
+          setMessages(prev => {
+            const updated = [...prev]
+            const msg = updated[botIdx.current]
+            if (msg) updated[botIdx.current] = { ...msg, content: msg.content + chunk }
+            return updated
+          })
+        },
+        onDone(data) {
+          setMessages(prev => {
+            const updated = [...prev]
+            const msg = updated[botIdx.current]
+            if (msg) {
+              updated[botIdx.current] = {
+                ...msg,
+                content: data.answer || msg.content,
+                debug: debugInfo,
+                graph_data: graphData,
+                mode,
+              }
+            }
+            return updated
+          })
+        },
+        onError(err) {
+          setMessages(prev => {
+            const updated = [...prev]
+            updated[botIdx.current] = {
+              role: 'assistant',
+              content: `请求失败: ${err.message}`,
+            }
+            return updated
+          })
+        },
+      })
     } catch (e) {
-      const errMsg: GraphRAGChatMessage = {
-        role: 'assistant',
-        content: `请求失败: ${e instanceof Error ? e.message : '未知错误'}`,
-      }
-      setMessages(prev => [...prev, errMsg])
+      setMessages(prev => {
+        const updated = [...prev]
+        updated[botIdx.current] = {
+          role: 'assistant',
+          content: `请求失败: ${e instanceof Error ? e.message : '未知错误'}`,
+        }
+        return updated
+      })
     } finally {
       setLoading(false)
     }
-  }
+  }, [input, loading, onResponse])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

@@ -13,9 +13,12 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import json
+
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 # 确保项目根目录在 sys.path 中（用于 KBQA/graphrag 包导入）
@@ -142,6 +145,46 @@ async def graphrag_chat(req: ChatRequest):
             edges=[GraphEdge(**e) for e in result["graph_data"]["edges"]],
         ),
     )
+
+
+def _sse_event(event: str, data: dict) -> str:
+    """格式化一个 SSE 事件。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """基础问答流式接口（SSE）。"""
+    bot = _get_bot()
+
+    def event_generator():
+        for evt in bot.chat_stream(req.question):
+            yield _sse_event(evt["event"], evt["data"])
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.post("/api/graphrag/chat/stream")
+async def graphrag_chat_stream(req: ChatRequest):
+    """GraphRAG 流式问答接口（SSE）。"""
+    bot = _get_graphrag_bot()
+    if not bot or not bot.available:
+        # 降级到基础问答流式
+        basic = _get_bot()
+
+        def fallback_generator():
+            for evt in basic.chat_stream(req.question):
+                if evt["event"] == "retrieval":
+                    evt["data"]["mode"] = "fallback_basic"
+                yield _sse_event(evt["event"], evt["data"])
+
+        return StreamingResponse(fallback_generator(), media_type="text/event-stream")
+
+    def event_generator():
+        for evt in bot.chat_stream(req.question):
+            yield _sse_event(evt["event"], evt["data"])
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/api/graph/neighbors/{name}", response_model=NeighborResponse)
