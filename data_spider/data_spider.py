@@ -24,6 +24,13 @@ from pathlib import Path
 import requests
 from lxml import etree
 
+try:
+    from langchain_ollama import ChatOllama
+    from langchain_core.messages import HumanMessage, SystemMessage
+    HAS_LANGCHAIN = True
+except ImportError:
+    HAS_LANGCHAIN = False
+
 # ---------------------------------------------------------------------------
 # 日志
 # ---------------------------------------------------------------------------
@@ -39,7 +46,6 @@ log = logging.getLogger("spider")
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR.parent / "data"
-DICT_DIR = BASE_DIR.parent / "dict"
 OUTPUT_PATH = DATA_DIR / "medical.json"
 PROGRESS_PATH = BASE_DIR / ".spider_progress.json"
 
@@ -72,65 +78,82 @@ SPLIT_FIELDS = {"cure_department", "cure_way", "common_drug"}
 
 
 # ---------------------------------------------------------------------------
-# 分词工具（用于并发症切分，取自 max_cut.py，去掉文件依赖）
+# 并发症分词工具（LangChain + Ollama）
 # ---------------------------------------------------------------------------
-class CutWords:
-    """基于词典的最大双向匹配分词，用于切分并发症文本。"""
+ACOMPANY_SYSTEM_PROMPT = (
+    "你是医学文本处理助手。用户会给你一段并发症文本，"
+    "请将其中的疾病名称逐个提取出来。"
+    "要求：每行输出一个疾病名称，不要输出序号、标点或任何其他内容。"
+    "/no_think"
+)
 
-    def __init__(self):
-        dict_path = DICT_DIR / "disease.txt"
-        self.word_dict = set()
-        self.max_wordlen = 0
-        if dict_path.exists():
-            for line in open(dict_path, encoding="utf-8"):
-                wd = line.strip()
-                if wd:
-                    self.word_dict.add(wd)
-                    if len(wd) > self.max_wordlen:
-                        self.max_wordlen = len(wd)
-        if self.max_wordlen == 0:
-            self.max_wordlen = 5
 
-    def max_forward_cut(self, sent):
-        cutlist, index = [], 0
-        while index < len(sent):
-            matched = False
-            for i in range(self.max_wordlen, 0, -1):
-                cand = sent[index: index + i]
-                if cand in self.word_dict:
-                    cutlist.append(cand)
-                    matched = True
-                    break
-            if not matched:
-                i = 1
-                cutlist.append(sent[index])
-            index += i
-        return cutlist
+class LLMWordSplitter:
+    """使用 LangChain + Ollama 切分并发症文本。Ollama 不可用时自动降级为简单分割。"""
 
-    def max_backward_cut(self, sent):
-        cutlist, index = [], len(sent)
-        while index > 0:
-            matched = False
-            for i in range(self.max_wordlen, 0, -1):
-                tmp = i + 1
-                cand = sent[index - tmp: index]
-                if cand in self.word_dict:
-                    cutlist.append(cand)
-                    matched = True
-                    break
-            if not matched:
-                tmp = 1
-                cutlist.append(sent[index - 1])
-            index -= tmp
-        return cutlist[::-1]
+    def __init__(self, model="qwen3:8b", base_url="http://localhost:11434"):
+        self.llm = None
+        self.model = model
+        if not HAS_LANGCHAIN:
+            log.warning("langchain_ollama 未安装，并发症分词将使用简单分割")
+            return
+        try:
+            self.llm = ChatOllama(
+                model=model,
+                base_url=base_url,
+                temperature=0,
+                num_predict=256,
+            )
+            # 轻量连通性测试
+            self.llm.invoke("hi")
+            log.info("Ollama (%s) 连接成功，将使用 LLM 分词", model)
+        except Exception as e:
+            log.warning("Ollama 不可用 (%s)，将使用简单分割", e)
+            self.llm = None
 
-    def max_biward_cut(self, sent):
-        fwd = self.max_forward_cut(sent)
-        bwd = self.max_backward_cut(sent)
-        single = lambda wl: sum(1 for w in wl if len(w) == 1)
-        if len(fwd) == len(bwd):
-            return bwd if single(fwd) > single(bwd) else fwd
-        return fwd if len(bwd) > len(fwd) else bwd
+    # ------------------------------------------------------------------
+    def split(self, text):
+        """切分并发症文本，返回疾病名称列表（过滤单字）。"""
+        if not text or not text.strip():
+            return []
+        if self.llm:
+            try:
+                result = self._llm_split(text)
+                if result:
+                    return result
+            except Exception as e:
+                log.debug("LLM 分词异常: %s，降级处理", e)
+        return self._simple_split(text)
+
+    # ------------------------------------------------------------------
+    def _llm_split(self, text):
+        messages = [
+            SystemMessage(content=ACOMPANY_SYSTEM_PROMPT),
+            HumanMessage(content=text),
+        ]
+        resp = self.llm.invoke(messages)
+        content = resp.content or ""
+        # qwen3 可能输出 <think>...</think>，去掉
+        content = re.sub(r"<think>[\s\S]*?</think>", "", content).strip()
+        names = []
+        for line in content.split("\n"):
+            w = line.strip().strip("-").strip("•").strip("*").strip()
+            if w and len(w) > 1:
+                names.append(w)
+        return names
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _simple_split(text):
+        """降级方案：按常见分隔符拆分。"""
+        for sep in ["、", "，", ",", "；", ";"]:
+            if sep in text:
+                return [w.strip() for w in text.split(sep) if len(w.strip()) > 1]
+        # 无分隔符时按空格尝试
+        parts = text.split()
+        if len(parts) > 1:
+            return [w for w in parts if len(w) > 1]
+        return [text] if len(text) > 1 else []
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +178,8 @@ class MedicalSpider:
     """从 xywy.com 爬取疾病数据，直接输出 JSONL 格式。"""
 
     def __init__(self, output_path=OUTPUT_PATH, start_page=1, end_page=11000,
-                 delay=0.3, max_retries=3, test_mode=False):
+                 delay=0.3, max_retries=3, test_mode=False,
+                 ollama_model="qwen3:8b", ollama_url="http://localhost:11434"):
         self.output_path = Path(output_path)
         self.start_page = start_page
         self.end_page = end_page
@@ -166,7 +190,7 @@ class MedicalSpider:
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
 
-        self.cutter = CutWords()
+        self.splitter = LLMWordSplitter(model=ollama_model, base_url=ollama_url)
 
         # 检查项缓存 {url: name}
         self._inspect_cache = {}
@@ -384,11 +408,11 @@ class MedicalSpider:
                      "cured_prob", "common_drug", "cost_money"]:
             if key in attrs:
                 record[key] = attrs[key]
-        # 并发症（需要分词）
+        # 并发症（LLM 分词）
         if "acompany" in attrs:
             raw = attrs["acompany"]
             if isinstance(raw, str):
-                acompany = [w for w in self.cutter.max_biward_cut(raw) if len(w) > 1]
+                acompany = self.splitter.split(raw)
             else:
                 acompany = raw
             record["acompany"] = acompany
@@ -525,6 +549,8 @@ def main():
     parser.add_argument("--resume", action="store_true", help="断点续爬")
     parser.add_argument("--delay", type=float, default=0.3, help="请求间隔秒数 (默认 0.3)")
     parser.add_argument("--test", action="store_true", help="测试模式：只打印不写文件")
+    parser.add_argument("--ollama-model", type=str, default="qwen3:8b", help="Ollama 模型名 (默认 qwen3:8b)")
+    parser.add_argument("--ollama-url", type=str, default="http://localhost:11434", help="Ollama 服务地址")
     args = parser.parse_args()
 
     spider = MedicalSpider(
@@ -533,6 +559,8 @@ def main():
         end_page=args.end,
         delay=args.delay,
         test_mode=args.test,
+        ollama_model=args.ollama_model,
+        ollama_url=args.ollama_url,
     )
     spider.crawl(resume=args.resume)
 

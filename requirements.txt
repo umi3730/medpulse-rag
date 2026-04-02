@@ -2,6 +2,10 @@
 requests>=2.28.0
 lxml>=4.9.0
 
+# 并发症文本分词（LangChain + Ollama 本地大模型）
+langchain-core>=0.3.0
+langchain-ollama>=0.3.0
+
 # 知识图谱构建 & 问答
 py2neo>=2021.2.3
 
