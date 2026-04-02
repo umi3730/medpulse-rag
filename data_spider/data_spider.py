@@ -88,14 +88,89 @@ ACOMPANY_SYSTEM_PROMPT = (
 )
 
 
+class DictCutter:
+    """基于词典的最大双向匹配分词（用于 LLM 不可用时的降级方案）。"""
+
+    def __init__(self, dict_path):
+        self.word_dict = set()
+        self.max_wordlen = 0
+        if dict_path.exists():
+            for line in open(dict_path, encoding="utf-8"):
+                wd = line.strip()
+                if wd:
+                    self.word_dict.add(wd)
+                    self.max_wordlen = max(self.max_wordlen, len(wd))
+        if self.max_wordlen == 0:
+            self.max_wordlen = 5
+
+    @property
+    def available(self):
+        return len(self.word_dict) > 0
+
+    def cut(self, sent):
+        """最大双向匹配，返回切分结果（取粒度更优的一侧）。"""
+        fwd = self._forward(sent)
+        bwd = self._backward(sent)
+        single = lambda wl: sum(1 for w in wl if len(w) == 1)
+        if len(fwd) == len(bwd):
+            return bwd if single(fwd) > single(bwd) else fwd
+        return fwd if len(bwd) > len(fwd) else bwd
+
+    def _forward(self, sent):
+        result, idx = [], 0
+        while idx < len(sent):
+            matched = False
+            for size in range(self.max_wordlen, 0, -1):
+                cand = sent[idx: idx + size]
+                if cand in self.word_dict:
+                    result.append(cand)
+                    idx += size
+                    matched = True
+                    break
+            if not matched:
+                result.append(sent[idx])
+                idx += 1
+        return result
+
+    def _backward(self, sent):
+        result, idx = [], len(sent)
+        while idx > 0:
+            matched = False
+            for size in range(self.max_wordlen, 0, -1):
+                start = idx - size
+                if start < 0:
+                    continue
+                cand = sent[start: idx]
+                if cand in self.word_dict:
+                    result.append(cand)
+                    idx = start
+                    matched = True
+                    break
+            if not matched:
+                result.append(sent[idx - 1])
+                idx -= 1
+        return result[::-1]
+
+
 class LLMWordSplitter:
-    """使用 LangChain + Ollama 切分并发症文本。Ollama 不可用时自动降级为简单分割。"""
+    """
+    三级降级并发症分词：
+      1) LLM (LangChain + Ollama) — 最优
+      2) 词典匹配 (dict/disease.txt) — 无 LLM 时使用
+      3) 简单分隔符切分 — 兜底
+    """
 
     def __init__(self, model="qwen3:8b", base_url="http://localhost:11434"):
         self.llm = None
         self.model = model
+        # 加载词典（第二级降级）
+        dict_path = BASE_DIR.parent / "dict" / "disease.txt"
+        self.dict_cutter = DictCutter(dict_path)
+        if self.dict_cutter.available:
+            log.info("疾病词典已加载 (%d 词条)，可用于降级分词", len(self.dict_cutter.word_dict))
+        # 初始化 LLM（第一级）
         if not HAS_LANGCHAIN:
-            log.warning("langchain_ollama 未安装，并发症分词将使用简单分割")
+            log.warning("langchain_ollama 未安装，将使用词典/简单分割")
             return
         try:
             self.llm = ChatOllama(
@@ -108,7 +183,7 @@ class LLMWordSplitter:
             self.llm.invoke("hi")
             log.info("Ollama (%s) 连接成功，将使用 LLM 分词", model)
         except Exception as e:
-            log.warning("Ollama 不可用 (%s)，将使用简单分割", e)
+            log.warning("Ollama 不可用 (%s)，将使用词典/简单分割", e)
             self.llm = None
 
     # ------------------------------------------------------------------
@@ -116,6 +191,7 @@ class LLMWordSplitter:
         """切分并发症文本，返回疾病名称列表（过滤单字）。"""
         if not text or not text.strip():
             return []
+        # Level 1: LLM
         if self.llm:
             try:
                 result = self._llm_split(text)
@@ -123,6 +199,10 @@ class LLMWordSplitter:
                     return result
             except Exception as e:
                 log.debug("LLM 分词异常: %s，降级处理", e)
+        # Level 2: 词典匹配
+        if self.dict_cutter.available:
+            return [w for w in self.dict_cutter.cut(text) if len(w) > 1]
+        # Level 3: 简单分隔符
         return self._simple_split(text)
 
     # ------------------------------------------------------------------
@@ -145,11 +225,10 @@ class LLMWordSplitter:
     # ------------------------------------------------------------------
     @staticmethod
     def _simple_split(text):
-        """降级方案：按常见分隔符拆分。"""
+        """兜底：按常见分隔符拆分。"""
         for sep in ["、", "，", ",", "；", ";"]:
             if sep in text:
                 return [w.strip() for w in text.split(sep) if len(w.strip()) > 1]
-        # 无分隔符时按空格尝试
         parts = text.split()
         if len(parts) > 1:
             return [w for w in parts if len(w) > 1]
