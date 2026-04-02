@@ -53,8 +53,28 @@ class NeighborResponse(BaseModel):
     graph_data: GraphData
 
 
+# ---- GraphRAG 响应 ----
+class GraphRAGDebugInfo(BaseModel):
+    entities_raw: list[dict] = []
+    entities_normalized: dict[str, list[str]] = {}
+    subgraph_stats: dict = {}
+    context_preview: str = ""
+    context_char_count: int = 0
+    generation_time_ms: float = 0
+    model_used: str = "none"
+    total_time_ms: float = 0
+
+
+class GraphRAGChatResponse(BaseModel):
+    answer: str
+    mode: str = "graphrag"
+    debug: GraphRAGDebugInfo
+    graph_data: GraphData
+
+
 # ---- 健康检查 ----
 class HealthResponse(BaseModel):
     status: str
     neo4j: bool
     ollama: bool
+    graphrag: bool = False

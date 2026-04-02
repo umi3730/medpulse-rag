@@ -18,13 +18,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# 把 qa_system 加入 sys.path（py2neo 等模块在其下）
+# 把 qa_system 和 graphrag 加入 sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "qa_system"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "graphrag"))
 
 from server.models import (
     ChatRequest, ChatResponse,
     NeighborResponse, GraphData, GraphNode, GraphEdge,
     HealthResponse,
+    GraphRAGChatResponse, GraphRAGDebugInfo,
 )
 
 log = logging.getLogger("server")
@@ -33,6 +35,7 @@ log = logging.getLogger("server")
 # 全局单例
 # ---------------------------------------------------------------------------
 _bot = None
+_graphrag_bot = None
 
 
 def _get_bot():
@@ -43,11 +46,18 @@ def _get_bot():
     return _bot
 
 
+def _get_graphrag_bot():
+    """获取 GraphRAGBot 单例（可能为 None）。"""
+    return _graphrag_bot
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用启动时初始化 ChatBot，关闭时释放。"""
-    global _bot
+    """应用启动时初始化 ChatBot 和 GraphRAGBot，关闭时释放。"""
+    global _bot, _graphrag_bot
     from chatbot import ChatBot
+    from graphrag_bot import GraphRAGBot
+
     cfg = app.state.bot_config
     _bot = ChatBot(
         neo4j_uri=cfg["neo4j_uri"],
@@ -59,9 +69,25 @@ async def lifespan(app: FastAPI):
         debug=True,
     )
     log.info("ChatBot 初始化完成")
+
+    try:
+        _graphrag_bot = GraphRAGBot(
+            neo4j_uri=cfg["neo4j_uri"],
+            neo4j_user=cfg["neo4j_user"],
+            neo4j_password=cfg["neo4j_password"],
+            ollama_model=cfg["ollama_model"],
+            ollama_url=cfg["ollama_url"],
+            debug=True,
+        )
+        log.info("GraphRAGBot 初始化完成 (available=%s)", _graphrag_bot.available)
+    except Exception as e:
+        log.warning("GraphRAGBot 初始化失败: %s", e)
+        _graphrag_bot = None
+
     yield
     _bot = None
-    log.info("ChatBot 已释放")
+    _graphrag_bot = None
+    log.info("所有 Bot 已释放")
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +112,35 @@ async def chat(req: ChatRequest):
     bot = _get_bot()
     result = bot.chat_detail(req.question)
     return result
+
+
+@app.post("/api/graphrag/chat", response_model=GraphRAGChatResponse)
+async def graphrag_chat(req: ChatRequest):
+    """GraphRAG 问答接口：子图检索 + LLM 生成。"""
+    bot = _get_graphrag_bot()
+    if not bot or not bot.available:
+        # 降级到基础问答
+        basic = _get_bot()
+        result = basic.chat_detail(req.question)
+        return GraphRAGChatResponse(
+            answer=result["answer"],
+            mode="fallback_basic",
+            debug=GraphRAGDebugInfo(),
+            graph_data=GraphData(
+                nodes=[GraphNode(**n) for n in result["graph_data"]["nodes"]],
+                edges=[GraphEdge(**e) for e in result["graph_data"]["edges"]],
+            ),
+        )
+    result = bot.chat_detail(req.question)
+    return GraphRAGChatResponse(
+        answer=result["answer"],
+        mode="graphrag",
+        debug=GraphRAGDebugInfo(**result["debug"]),
+        graph_data=GraphData(
+            nodes=[GraphNode(**n) for n in result["graph_data"]["nodes"]],
+            edges=[GraphEdge(**e) for e in result["graph_data"]["edges"]],
+        ),
+    )
 
 
 @app.get("/api/graph/neighbors/{name}", response_model=NeighborResponse)
@@ -144,11 +199,13 @@ async def health():
         pass
 
     ollama_ok = bot.llm_engine.available
+    graphrag_ok = _graphrag_bot is not None and _graphrag_bot.available
 
     return HealthResponse(
         status="ok" if (neo4j_ok and ollama_ok) else "degraded",
         neo4j=neo4j_ok,
         ollama=ollama_ok,
+        graphrag=graphrag_ok,
     )
 
 

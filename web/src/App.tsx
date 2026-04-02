@@ -3,25 +3,63 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import ChatPanel from '@/components/ChatPanel'
 import DebugPanel from '@/components/DebugPanel'
 import GraphPanel from '@/components/GraphPanel'
-import type { ChatMessage, DebugInfo, GraphData } from '@/types'
+import GraphRAGChatPanel from '@/components/GraphRAGChatPanel'
+import GraphRAGDebugPanel from '@/components/GraphRAGDebugPanel'
+import type { ChatMessage, DebugInfo, GraphData, GraphRAGChatMessage, GraphRAGDebugInfo } from '@/types'
 import { PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 function App() {
-  const [debug, setDebug] = useState<DebugInfo | null>(null)
-  const [graphData, setGraphData] = useState<GraphData | null>(null)
-  const [panelOpen, setPanelOpen] = useState(true)
+  // 基础问答 state
+  const [basicDebug, setBasicDebug] = useState<DebugInfo | null>(null)
+  const [basicGraph, setBasicGraph] = useState<GraphData | null>(null)
 
-  const handleResponse = (msg: ChatMessage) => {
-    if (msg.debug) setDebug(msg.debug)
-    if (msg.graph_data) setGraphData(msg.graph_data)
+  // GraphRAG state
+  const [ragDebug, setRagDebug] = useState<GraphRAGDebugInfo | null>(null)
+  const [ragGraph, setRagGraph] = useState<GraphData | null>(null)
+
+  const [panelOpen, setPanelOpen] = useState(true)
+  const [mode, setMode] = useState<'basic' | 'graphrag'>('basic')
+
+  const handleBasicResponse = (msg: ChatMessage) => {
+    if (msg.debug) setBasicDebug(msg.debug)
+    if (msg.graph_data) setBasicGraph(msg.graph_data)
+  }
+
+  const handleRagResponse = (msg: GraphRAGChatMessage) => {
+    if (msg.debug) setRagDebug(msg.debug)
+    if (msg.graph_data) setRagGraph(msg.graph_data)
   }
 
   return (
     <div className="h-screen flex flex-col">
       {/* Header */}
       <header className="h-12 border-b flex items-center justify-between px-4 shrink-0 bg-white">
-        <span className="font-semibold">🏥 医药知识图谱智能问答系统</span>
+        <div className="flex items-center gap-4">
+          <span className="font-semibold">🏥 医药知识图谱智能问答系统</span>
+          <div className="flex bg-muted rounded-lg p-0.5">
+            <button
+              className={`px-3 py-1 rounded-md text-sm transition-colors ${
+                mode === 'basic'
+                  ? 'bg-white shadow-sm font-medium'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              onClick={() => setMode('basic')}
+            >
+              基础问答
+            </button>
+            <button
+              className={`px-3 py-1 rounded-md text-sm transition-colors ${
+                mode === 'graphrag'
+                  ? 'bg-white shadow-sm font-medium'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              onClick={() => setMode('graphrag')}
+            >
+              GraphRAG
+            </button>
+          </div>
+        </div>
         <Button
           variant="ghost"
           size="icon"
@@ -36,7 +74,11 @@ function App() {
       <div className="flex flex-1 overflow-hidden">
         {/* 左侧: 聊天 */}
         <div className={`flex-1 min-w-0 ${panelOpen ? 'border-r' : ''}`}>
-          <ChatPanel onResponse={handleResponse} />
+          {mode === 'basic' ? (
+            <ChatPanel onResponse={handleBasicResponse} />
+          ) : (
+            <GraphRAGChatPanel onResponse={handleRagResponse} />
+          )}
         </div>
 
         {/* 右侧: 调试 + 图谱 */}
@@ -48,10 +90,14 @@ function App() {
                 <TabsTrigger value="graph">知识图谱</TabsTrigger>
               </TabsList>
               <TabsContent value="debug" className="flex-1 overflow-hidden m-0">
-                <DebugPanel debug={debug} />
+                {mode === 'basic' ? (
+                  <DebugPanel debug={basicDebug} />
+                ) : (
+                  <GraphRAGDebugPanel debug={ragDebug} />
+                )}
               </TabsContent>
               <TabsContent value="graph" className="flex-1 overflow-hidden m-0">
-                <GraphPanel graphData={graphData} />
+                <GraphPanel graphData={mode === 'basic' ? basicGraph : ragGraph} />
               </TabsContent>
             </Tabs>
           </div>
