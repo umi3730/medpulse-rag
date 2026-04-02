@@ -9,7 +9,7 @@ import json
 import logging
 import re
 
-from config import ENTITY_EXTRACT_PROMPT
+from .config import ENTITY_EXTRACT_PROMPT
 
 try:
     from langchain_core.messages import HumanMessage, SystemMessage

@@ -9,7 +9,7 @@ import logging
 import re
 import time
 
-from config import GENERATION_SYSTEM_PROMPT
+from .config import GENERATION_SYSTEM_PROMPT
 
 try:
     from langchain_core.messages import HumanMessage, SystemMessage

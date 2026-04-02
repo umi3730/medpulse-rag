@@ -15,8 +15,8 @@ import argparse
 import logging
 import sys
 
-from config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, LLM_MODEL, LLM_BASE_URL
-from chatbot import ChatBot
+from .config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, LLM_MODEL, LLM_BASE_URL
+from .chatbot import ChatBot
 
 
 def main():

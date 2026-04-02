@@ -10,18 +10,18 @@ import time
 
 from py2neo import Graph
 
-from config import (
+from .config import (
     NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
     LLM_MODEL, LLM_BASE_URL,
     LLM_NUM_PREDICT_GENERATION,
     DEFAULT_ANSWER,
     create_llm,
 )
-from entity_extractor import EntityExtractor
-from entity_normalizer import EntityNormalizer
-from subgraph_retriever import SubgraphRetriever
-from context_builder import ContextBuilder
-from generator import GraphRAGGenerator
+from .entity_extractor import EntityExtractor
+from KBQA.entity_normalizer import EntityNormalizer
+from .subgraph_retriever import SubgraphRetriever
+from .context_builder import ContextBuilder
+from .generator import GraphRAGGenerator
 
 log = logging.getLogger("graphrag")
 

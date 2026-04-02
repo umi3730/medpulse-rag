@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from config import MAX_CONTEXT_CHARS, MAX_PROP_VALUE_LEN, MAX_TARGETS_PER_REL
+from .config import MAX_CONTEXT_CHARS, MAX_PROP_VALUE_LEN, MAX_TARGETS_PER_REL
 
 log = logging.getLogger("graphrag")
 

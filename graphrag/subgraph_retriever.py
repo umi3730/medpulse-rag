@@ -10,7 +10,7 @@ import time
 
 from py2neo import Graph
 
-from config import (
+from .config import (
     NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
     MAX_HOPS, HOP1_LIMIT, HOP2_LIMIT, HOP2_CANDIDATES,
     DISEASE_PROPERTIES,

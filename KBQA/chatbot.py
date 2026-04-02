@@ -12,16 +12,16 @@ from __future__ import annotations
 
 import logging
 
-from config import (
+from .config import (
     NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
     LLM_MODEL, LLM_BASE_URL,
     DEFAULT_ANSWER, INTENT_TYPES,
 )
-from llm_engine import LLMEngine
-from entity_normalizer import EntityNormalizer
-from cypher_generator import CypherGenerator
-from graph_query import GraphQueryExecutor
-from answer_formatter import AnswerFormatter
+from .llm_engine import LLMEngine
+from .entity_normalizer import EntityNormalizer
+from .cypher_generator import CypherGenerator
+from .graph_query import GraphQueryExecutor
+from .answer_formatter import AnswerFormatter
 
 log = logging.getLogger("qa")
 

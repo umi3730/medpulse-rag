@@ -18,9 +18,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# 把 KBQA 和 graphrag 加入 sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "KBQA"))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "graphrag"))
+# 确保项目根目录在 sys.path 中（用于 KBQA/graphrag 包导入）
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from server.models import (
     ChatRequest, ChatResponse,
@@ -55,8 +56,8 @@ def _get_graphrag_bot():
 async def lifespan(app: FastAPI):
     """应用启动时初始化 ChatBot 和 GraphRAGBot，关闭时释放。"""
     global _bot, _graphrag_bot
-    from chatbot import ChatBot
-    from graphrag_bot import GraphRAGBot
+    from KBQA.chatbot import ChatBot
+    from graphrag.graphrag_bot import GraphRAGBot
 
     cfg = app.state.bot_config
     _bot = ChatBot(

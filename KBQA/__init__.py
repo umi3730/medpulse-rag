@@ -4,6 +4,6 @@
 基于 LLM (LangChain + Ollama) 的意图识别和实体抽取，
 结合 Neo4j 知识图谱的结构化问答。
 """
-from chatbot import ChatBot
+from .chatbot import ChatBot
 
 __all__ = ["ChatBot"]

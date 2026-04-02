@@ -11,7 +11,7 @@ import json
 import re
 import logging
 
-from config import (
+from .config import (
     LLM_SYSTEM_PROMPT, LLM_MODEL, LLM_BASE_URL,
     LLM_TEMPERATURE, LLM_MAX_TOKENS, INTENT_TYPES,
     create_llm,

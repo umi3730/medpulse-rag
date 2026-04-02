@@ -9,7 +9,7 @@ import logging
 
 from py2neo import Graph
 
-from config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
+from .config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 
 log = logging.getLogger("qa")
 

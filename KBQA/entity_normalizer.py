@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from config import ENTITY_DICTS, DENY_DICT_PATH, FUZZY_MATCH_THRESHOLD
+from .config import ENTITY_DICTS, DENY_DICT_PATH, FUZZY_MATCH_THRESHOLD
 
 try:
     from rapidfuzz import fuzz as rf_fuzz

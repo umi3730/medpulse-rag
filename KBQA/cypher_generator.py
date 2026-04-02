@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from config import INTENT_TYPES
+from .config import INTENT_TYPES
 
 log = logging.getLogger("qa")
 

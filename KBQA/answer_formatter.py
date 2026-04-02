@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import logging
 
-from config import ANSWER_NUM_LIMIT
+from .config import ANSWER_NUM_LIMIT
 
 try:
     from langchain_core.messages import HumanMessage, SystemMessage
