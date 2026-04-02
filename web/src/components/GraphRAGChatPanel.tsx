@@ -67,7 +67,7 @@ export default function GraphRAGChatPanel({ onResponse }: Props) {
         <Badge variant="outline" className="text-xs font-normal">子图检索 + LLM 生成</Badge>
       </div>
 
-      <ScrollArea className="flex-1 p-4">
+      <ScrollArea className="flex-1 min-h-0 p-4">
         <div className="space-y-3">
           {messages.length === 0 && (
             <div className="text-center text-muted-foreground py-20">

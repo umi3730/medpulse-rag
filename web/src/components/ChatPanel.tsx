@@ -64,7 +64,7 @@ export default function ChatPanel({ onResponse }: Props) {
         医药知识图谱问答
       </div>
 
-      <ScrollArea className="flex-1 p-4">
+      <ScrollArea className="flex-1 min-h-0 p-4">
         <div className="space-y-3">
           {messages.length === 0 && (
             <div className="text-center text-muted-foreground py-20">
