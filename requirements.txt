@@ -14,3 +14,7 @@ rapidfuzz>=3.0.0
 
 # 问句分类降级（AC自动机，LLM 不可用时使用）
 pyahocorasick>=2.0.0
+
+# Web API 服务
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0

@@ -54,45 +54,126 @@ class ChatBot:
     # 公共接口
     # ==================================================================
     def chat(self, question: str) -> str:
-        """主入口：接收问题，返回回答。"""
+        """主入口：接收问题，返回回答字符串。"""
+        return self.chat_detail(question)["answer"]
+
+    def chat_detail(self, question: str) -> dict:
+        """
+        详细问答接口：返回回答 + 调试信息 + 图谱数据。
+
+        返回格式:
+          {
+            "answer": str,
+            "debug": {"level": int, "intents": [...], "entities": {...},
+                      "cypher_queries": [...], "result_count": int},
+            "graph_data": {"nodes": [...], "edges": [...]}
+          }
+        """
         question = question.strip()
+        empty = {
+            "answer": DEFAULT_ANSWER,
+            "debug": {"level": 0, "intents": [], "entities": {},
+                      "cypher_queries": [], "result_count": 0},
+            "graph_data": {"nodes": [], "edges": []},
+        }
         if not question:
-            return DEFAULT_ANSWER
+            return empty
 
         # Step 1: 语义分析（意图 + 实体）
-        intents, entity_dict = self._analyze(question)
+        intents, entity_dict, level = self._analyze(question)
 
         if self.debug:
-            log.info("[DEBUG] 意图: %s | 实体: %s", intents, entity_dict)
+            log.info("[DEBUG] 意图: %s | 实体: %s | Level: %d", intents, entity_dict, level)
 
         if not intents or not entity_dict:
-            return DEFAULT_ANSWER
+            empty["debug"]["level"] = level
+            return empty
 
         # Step 2: Cypher 查询生成
         query_groups = self.cypher_gen.generate(intents, entity_dict)
-        if self.debug:
-            for g in query_groups:
-                for q in g["queries"]:
+        cypher_queries = []
+        for g in query_groups:
+            for q in g["queries"]:
+                cypher_queries.append({"cypher": q["cypher"], "params": q["params"]})
+                if self.debug:
                     log.info("[DEBUG] Cypher: %s | 参数: %s", q["cypher"][:80], q["params"])
 
         if not query_groups:
-            return DEFAULT_ANSWER
+            empty["debug"].update(level=level, intents=intents, entities=entity_dict,
+                                  cypher_queries=cypher_queries)
+            return empty
 
         # Step 3: 执行查询
         results = self.graph_query.execute(query_groups)
+        result_count = sum(len(r["answers"]) for r in results)
         if self.debug:
-            total = sum(len(r["answers"]) for r in results)
-            log.info("[DEBUG] 查询结果: %d 条", total)
+            log.info("[DEBUG] 查询结果: %d 条", result_count)
 
         # Step 4: 格式化回答
         answer = self.formatter.format(results)
-        return answer if answer else DEFAULT_ANSWER
+
+        # Step 5: 提取图谱数据（节点 + 边）
+        graph_data = self._extract_graph_data(results)
+
+        return {
+            "answer": answer if answer else DEFAULT_ANSWER,
+            "debug": {
+                "level": level,
+                "intents": intents,
+                "entities": entity_dict,
+                "cypher_queries": cypher_queries,
+                "result_count": result_count,
+            },
+            "graph_data": graph_data,
+        }
+
+    # ==================================================================
+    # 图谱数据提取（供前端可视化）
+    # ==================================================================
+    @staticmethod
+    def _extract_graph_data(results: list[dict]) -> dict:
+        """从查询结果中提取 nodes 和 edges，用于力导向图可视化。"""
+        nodes_set: dict[str, str] = {}  # name → label
+        edges: list[dict] = []
+
+        # 节点标签映射
+        label_map = {
+            "disease_symptom": ("Disease", "Symptom"),
+            "symptom_disease": ("Disease", "Symptom"),
+            "disease_acompany": ("Disease", "Disease"),
+            "disease_do_food": ("Disease", "Food"),
+            "disease_not_food": ("Disease", "Food"),
+            "disease_drug": ("Disease", "Drug"),
+            "disease_check": ("Disease", "Check"),
+            "check_disease": ("Disease", "Check"),
+            "drug_disease": ("Disease", "Drug"),
+            "food_do_disease": ("Disease", "Food"),
+            "food_not_disease": ("Disease", "Food"),
+        }
+
+        for group in results:
+            qt = group["question_type"]
+            labels = label_map.get(qt)
+            for row in group["answers"]:
+                m_name = row.get("m.name")
+                n_name = row.get("n.name")
+                r_name = row.get("r.name")
+                if m_name and n_name and labels:
+                    nodes_set.setdefault(m_name, labels[0])
+                    nodes_set.setdefault(n_name, labels[1])
+                    edges.append({
+                        "source": m_name, "target": n_name,
+                        "label": r_name or qt,
+                    })
+
+        nodes = [{"id": name, "label": lbl} for name, lbl in nodes_set.items()]
+        return {"nodes": nodes, "edges": edges}
 
     # ==================================================================
     # 语义分析（含降级）
     # ==================================================================
-    def _analyze(self, question: str) -> tuple[list[str], dict[str, list[str]]]:
-        """分析问题，返回 (intents, entity_dict)。"""
+    def _analyze(self, question: str) -> tuple[list[str], dict[str, list[str]], int]:
+        """分析问题，返回 (intents, entity_dict, level)。"""
         analysis = self.llm_engine.analyze(question)
 
         if analysis and analysis["entities"]:
@@ -109,7 +190,7 @@ class ChatBot:
                     # Level 1: 全 LLM — 意图和实体都有
                     if self.debug:
                         log.info("[DEBUG] Level 1: 全 LLM 模式")
-                    return intents, entity_dict
+                    return intents, entity_dict, 1
                 else:
                     # Level 2: LLM 实体 + 关键词意图
                     if self.debug:
@@ -118,12 +199,13 @@ class ChatBot:
                     for type_list in entities_map.values():
                         types.update(type_list)
                     intents = self._keyword_classify(question, types)
-                    return intents, entity_dict
+                    return intents, entity_dict, 2
 
         # Level 3: 词典 NER + 关键词意图
         if self.debug:
             log.info("[DEBUG] Level 3: 词典 NER + 关键词意图")
-        return self._fallback_full(question)
+        intents, entity_dict = self._fallback_full(question)
+        return intents, entity_dict, 3
 
     # ==================================================================
     # Level 3 降级：词典 NER + 关键词分类
