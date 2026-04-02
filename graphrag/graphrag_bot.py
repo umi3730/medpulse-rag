@@ -12,21 +12,16 @@ from py2neo import Graph
 
 from config import (
     NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
-    OLLAMA_MODEL, OLLAMA_BASE_URL,
-    LLM_TEMPERATURE, LLM_NUM_PREDICT_GENERATION,
+    LLM_MODEL, LLM_BASE_URL,
+    LLM_NUM_PREDICT_GENERATION,
     DEFAULT_ANSWER,
+    create_llm,
 )
 from entity_extractor import EntityExtractor
 from entity_normalizer import EntityNormalizer
 from subgraph_retriever import SubgraphRetriever
 from context_builder import ContextBuilder
 from generator import GraphRAGGenerator
-
-try:
-    from langchain_ollama import ChatOllama
-    HAS_LANGCHAIN = True
-except ImportError:
-    HAS_LANGCHAIN = False
 
 log = logging.getLogger("graphrag")
 
@@ -36,27 +31,34 @@ class GraphRAGBot:
 
     def __init__(self, neo4j_uri: str = NEO4J_URI, neo4j_user: str = NEO4J_USER,
                  neo4j_password: str = NEO4J_PASSWORD,
-                 ollama_model: str = OLLAMA_MODEL, ollama_url: str = OLLAMA_BASE_URL,
-                 debug: bool = False):
+                 llm_model: str = LLM_MODEL, llm_base_url: str = LLM_BASE_URL,
+                 debug: bool = False,
+                 # 向后兼容
+                 ollama_model: str | None = None, ollama_url: str | None = None):
         self.debug = debug
+        if ollama_model:
+            llm_model = ollama_model
+        if ollama_url:
+            llm_base_url = ollama_url
 
         # 共享 LLM 实例
-        self.llm: ChatOllama | None = None
+        self.llm = None
         self._llm_available = False
-        if HAS_LANGCHAIN:
-            try:
-                self.llm = ChatOllama(
-                    model=ollama_model,
-                    base_url=ollama_url,
-                    temperature=LLM_TEMPERATURE,
-                    num_predict=LLM_NUM_PREDICT_GENERATION,
-                )
+        try:
+            self.llm = create_llm(
+                model=llm_model,
+                base_url=llm_base_url,
+                max_tokens=LLM_NUM_PREDICT_GENERATION,
+            )
+            if self.llm:
                 self.llm.invoke("hi")  # 连通测试
                 self._llm_available = True
-                log.info("GraphRAG LLM (%s) 就绪", ollama_model)
-            except Exception as e:
-                log.warning("Ollama 不可用，GraphRAG 功能受限: %s", e)
-                self.llm = None
+                log.info("GraphRAG LLM (%s) 就绪", llm_model)
+            else:
+                log.warning("LLM 依赖未安装，GraphRAG 功能受限")
+        except Exception as e:
+            log.warning("LLM 不可用，GraphRAG 功能受限: %s", e)
+            self.llm = None
 
         # 共享 Neo4j 连接
         self.graph = Graph(neo4j_uri, auth=(neo4j_user, neo4j_password))

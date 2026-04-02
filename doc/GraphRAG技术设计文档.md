@@ -49,7 +49,7 @@ graphrag/
 
 ### 3.2 config.py
 
-复用 `qa_system/config.py` 的共享配置（Neo4j 连接、Ollama 地址、词典路径），新增：
+从项目根目录 `settings.py` 导入共享配置（Neo4j 连接、LLM 参数、词典路径），支持 Ollama/OpenAI/Anthropic 多种 LLM 提供商。新增模块特有参数：
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -66,7 +66,7 @@ graphrag/
 
 ### 3.3 entity_extractor.py
 
-`EntityExtractor` 类接收共享的 `ChatOllama` 实例：
+`EntityExtractor` 类接收共享的 LLM 实例（支持任何 LangChain BaseChatModel）：
 
 - 使用简化提示词（只提取实体，不分类意图）
 - 输出格式: `[{"name": "糖尿病", "type": "disease"}, {"name": "高血压", "type": "disease"}]`
@@ -108,7 +108,7 @@ LIMIT 50
 
 ### 3.6 generator.py
 
-`GraphRAGGenerator` 类接收共享的 `ChatOllama` 实例（`num_predict=1024`）：
+`GraphRAGGenerator` 类接收共享的 LLM 实例（`max_tokens=1024`）：
 
 - 将 `question + context_text` 填入系统提示词
 - 清理 `<think>` 标签
@@ -116,8 +116,8 @@ LIMIT 50
 
 ### 3.7 graphrag_bot.py — 编排器
 
-`GraphRAGBot` 初始化时创建共享实例：
-- 1 个 `ChatOllama`（实体抽取和答案生成共用）
+`GraphRAGBot` 初始化时通过 `create_llm()` 工厂创建共享实例：
+- 1 个 LLM（BaseChatModel，实体抽取和答案生成共用）
 - 1 个 `py2neo.Graph`
 - 1 个 `EntityNormalizer`（复用 qa_system）
 

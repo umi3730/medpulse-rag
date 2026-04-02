@@ -3,7 +3,7 @@
 """
 LLM 语义分析引擎：单次调用同时完成意图识别 + 实体抽取。
 
-使用 LangChain + Ollama (qwen3:8b)，输出结构化 JSON。
+支持多种 LLM 提供商（Ollama/OpenAI/Anthropic），通过 settings.create_llm() 工厂创建。
 """
 from __future__ import annotations
 
@@ -12,16 +12,16 @@ import re
 import logging
 
 from config import (
-    LLM_SYSTEM_PROMPT, OLLAMA_MODEL, OLLAMA_BASE_URL,
-    LLM_TEMPERATURE, LLM_NUM_PREDICT, INTENT_TYPES,
+    LLM_SYSTEM_PROMPT, LLM_MODEL, LLM_BASE_URL,
+    LLM_TEMPERATURE, LLM_MAX_TOKENS, INTENT_TYPES,
+    create_llm,
 )
 
 try:
-    from langchain_ollama import ChatOllama
     from langchain_core.messages import HumanMessage, SystemMessage
-    HAS_LANGCHAIN = True
+    HAS_LANGCHAIN_CORE = True
 except ImportError:
-    HAS_LANGCHAIN = False
+    HAS_LANGCHAIN_CORE = False
 
 log = logging.getLogger("qa")
 
@@ -39,25 +39,23 @@ class LLMEngine:
     失败时返回 None，由调用方触发降级。
     """
 
-    def __init__(self, model: str = OLLAMA_MODEL, base_url: str = OLLAMA_BASE_URL):
+    def __init__(self, model: str = LLM_MODEL, base_url: str = LLM_BASE_URL):
         self.llm = None
         self.model = model
         self.base_url = base_url
-        if not HAS_LANGCHAIN:
-            log.warning("langchain_ollama 未安装，LLM 引擎不可用")
+        if not HAS_LANGCHAIN_CORE:
+            log.warning("langchain-core 未安装，LLM 引擎不可用")
             return
         try:
-            self.llm = ChatOllama(
-                model=model,
-                base_url=base_url,
-                temperature=LLM_TEMPERATURE,
-                num_predict=LLM_NUM_PREDICT,
-            )
+            self.llm = create_llm(model=model, base_url=base_url)
+            if self.llm is None:
+                log.warning("LLM 提供商依赖未安装，LLM 引擎不可用")
+                return
             # 连通性测试
             self.llm.invoke("hi")
-            log.info("Ollama (%s) 连接成功，LLM 引擎就绪", model)
+            log.info("LLM (%s) 连接成功，LLM 引擎就绪", model)
         except Exception as e:
-            log.warning("Ollama 不可用 (%s)，LLM 引擎将降级", e)
+            log.warning("LLM 不可用 (%s)，LLM 引擎将降级", e)
             self.llm = None
 
     @property

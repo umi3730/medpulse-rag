@@ -15,11 +15,10 @@ import logging
 from config import ANSWER_NUM_LIMIT
 
 try:
-    from langchain_ollama import ChatOllama
     from langchain_core.messages import HumanMessage, SystemMessage
-    HAS_LANGCHAIN = True
+    HAS_LANGCHAIN_CORE = True
 except ImportError:
-    HAS_LANGCHAIN = False
+    HAS_LANGCHAIN_CORE = False
 
 log = logging.getLogger("qa")
 
@@ -33,7 +32,7 @@ POLISH_SYSTEM_PROMPT = (
 class AnswerFormatter:
     """格式化 Neo4j 查询结果为中文自然语言回答。"""
 
-    def __init__(self, mode: str = "template", llm: ChatOllama | None = None,
+    def __init__(self, mode: str = "template", llm=None,
                  num_limit: int = ANSWER_NUM_LIMIT):
         self.mode = mode
         self.llm = llm if mode == "llm" else None
@@ -182,7 +181,7 @@ class AnswerFormatter:
     # ------------------------------------------------------------------
     def _llm_polish(self, text: str) -> str:
         """用 LLM 将模板回答改写为更自然的语言。"""
-        if not self.llm or not HAS_LANGCHAIN:
+        if not self.llm or not HAS_LANGCHAIN_CORE:
             return ""
         try:
             messages = [

@@ -1,50 +1,39 @@
 #!/usr/bin/env python3
 # coding: utf-8
 """
-问答系统配置：路径、Neo4j、Ollama、意图/实体定义、提示词
+问答系统配置：意图/实体定义、提示词。
+共享设置（Neo4j、LLM、路径）从 settings.py 导入。
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+# 确保项目根目录在 sys.path 中
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+# 从统一配置导入共享设置（re-export 供本模块内其他文件使用）
+from settings import (  # noqa: E402, F401
+    PROJECT_DIR, DICT_DIR, DATA_DIR,
+    NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
+    LLM_PROVIDER, LLM_MODEL, LLM_BASE_URL,
+    LLM_TEMPERATURE, LLM_MAX_TOKENS,
+    ENTITY_DICTS, DENY_DICT_PATH, FUZZY_MATCH_THRESHOLD,
+    ANSWER_NUM_LIMIT, DEFAULT_ANSWER,
+    create_llm,
+)
+
+# 向后兼容别名
+OLLAMA_MODEL = LLM_MODEL
+OLLAMA_BASE_URL = LLM_BASE_URL
+LLM_NUM_PREDICT = LLM_MAX_TOKENS
 
 # ---------------------------------------------------------------------------
 # 路径
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = BASE_DIR.parent
-DICT_DIR = PROJECT_DIR / "dict"
-
-# ---------------------------------------------------------------------------
-# Neo4j
-# ---------------------------------------------------------------------------
-NEO4J_URI = "bolt://127.0.0.1:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "neo4j"
-
-# ---------------------------------------------------------------------------
-# Ollama / LLM
-# ---------------------------------------------------------------------------
-OLLAMA_MODEL = "qwen3:8b"
-OLLAMA_BASE_URL = "http://localhost:11434"
-LLM_TEMPERATURE = 0
-LLM_NUM_PREDICT = 512
-
-# ---------------------------------------------------------------------------
-# 实体词典（entity_type → 词典文件路径）
-# ---------------------------------------------------------------------------
-ENTITY_DICTS = {
-    "disease":    DICT_DIR / "disease.txt",
-    "symptom":    DICT_DIR / "symptom.txt",
-    "drug":       DICT_DIR / "drug.txt",
-    "check":      DICT_DIR / "check.txt",
-    "food":       DICT_DIR / "food.txt",
-    "producer":   DICT_DIR / "producer.txt",
-    "department": DICT_DIR / "department.txt",
-}
-DENY_DICT_PATH = DICT_DIR / "deny.txt"
-
-# 模糊匹配阈值（0-100，rapidfuzz ratio 分数）
-FUZZY_MATCH_THRESHOLD = 80
 
 # ---------------------------------------------------------------------------
 # 18 种意图类型
@@ -114,11 +103,3 @@ LLM_SYSTEM_PROMPT = """\
 3. has_negation 表示问句是否包含否定/禁止含义（不、别、忌、禁止、不能等）
 4. 如果无法识别为医疗问题，返回 {"intents": [], "entities": [], "has_negation": false}
 /no_think"""
-
-# ---------------------------------------------------------------------------
-# 回答结果数量限制
-# ---------------------------------------------------------------------------
-ANSWER_NUM_LIMIT = 20
-
-# 默认回复
-DEFAULT_ANSWER = "您好，我是医药智能助理。暂时无法回答您的问题，请尝试换一种方式提问。"

@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
 # coding: utf-8
 """
-爬虫配置：路径、Headers、字段映射、停用词
+爬虫配置：HTTP、字段映射、停用词。
+共享设置（路径）从 settings.py 导入。
 """
+from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+# 确保项目根目录在 sys.path 中
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from settings import DATA_DIR  # noqa: E402, F401
 
 # ---------------------------------------------------------------------------
 # 路径
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR.parent / "data"
 OUTPUT_PATH = DATA_DIR / "medical.json"
 PROGRESS_PATH = BASE_DIR / ".spider_progress.json"
 

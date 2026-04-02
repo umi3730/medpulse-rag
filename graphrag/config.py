@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
 # coding: utf-8
 """
-GraphRAG 配置：复用 KBQA 共享配置，新增检索/生成参数和提示词。
+GraphRAG 配置：检索/生成参数和提示词。
+共享设置从 settings.py 导入。
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-# 复用 KBQA 的共享配置
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "KBQA"))
-from config import (  # noqa: E402, F401
+# 确保项目根目录在 sys.path 中
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+# 从统一配置导入共享设置（re-export）
+from settings import (  # noqa: E402, F401
     NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
-    OLLAMA_MODEL, OLLAMA_BASE_URL,
-    LLM_TEMPERATURE, LLM_NUM_PREDICT,
+    LLM_MODEL, LLM_BASE_URL,
+    LLM_TEMPERATURE, LLM_MAX_TOKENS,
     ENTITY_DICTS, DENY_DICT_PATH, FUZZY_MATCH_THRESHOLD,
     DEFAULT_ANSWER,
+    create_llm,
 )
+
+# 向后兼容别名
+OLLAMA_MODEL = LLM_MODEL
+OLLAMA_BASE_URL = LLM_BASE_URL
+LLM_NUM_PREDICT = LLM_MAX_TOKENS
 
 # ---------------------------------------------------------------------------
 # 子图检索参数

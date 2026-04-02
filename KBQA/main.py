@@ -15,7 +15,7 @@ import argparse
 import logging
 import sys
 
-from config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, OLLAMA_MODEL, OLLAMA_BASE_URL
+from config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, LLM_MODEL, LLM_BASE_URL
 from chatbot import ChatBot
 
 
@@ -35,12 +35,15 @@ def main():
     parser.add_argument("--uri", type=str, default=NEO4J_URI, help="Neo4j URI")
     parser.add_argument("--user", type=str, default=NEO4J_USER, help="Neo4j 用户名")
     parser.add_argument("--password", type=str, default=NEO4J_PASSWORD, help="Neo4j 密码")
-    parser.add_argument("--ollama-model", type=str, default=OLLAMA_MODEL, help="Ollama 模型名称")
-    parser.add_argument("--ollama-url", type=str, default=OLLAMA_BASE_URL, help="Ollama 服务地址")
+    parser.add_argument("--llm-model", type=str, default=LLM_MODEL, help="LLM 模型名称")
+    parser.add_argument("--llm-base-url", type=str, default=LLM_BASE_URL, help="LLM API 地址")
     parser.add_argument("--answer-mode", choices=["template", "llm"], default="template",
                         help="回答模式：template（默认）或 llm（LLM 润色）")
     parser.add_argument("--question", "-q", type=str, default=None, help="单次问答模式")
     parser.add_argument("--debug", action="store_true", help="显示调试信息")
+    # 向后兼容
+    parser.add_argument("--ollama-model", type=str, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--ollama-url", type=str, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     # 日志配置
@@ -51,14 +54,18 @@ def main():
         datefmt="%H:%M:%S",
     )
 
+    # 优先用新参数，兼容旧参数
+    llm_model = args.llm_model if args.ollama_model is None else args.ollama_model
+    llm_base_url = args.llm_base_url if args.ollama_url is None else args.ollama_url
+
     # 初始化
     print("正在初始化问答系统...")
     bot = ChatBot(
         neo4j_uri=args.uri,
         neo4j_user=args.user,
         neo4j_password=args.password,
-        ollama_model=args.ollama_model,
-        ollama_url=args.ollama_url,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
         answer_mode=args.answer_mode,
         debug=args.debug,
     )

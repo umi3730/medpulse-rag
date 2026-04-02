@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 # coding: utf-8
 """
-Neo4j 连接配置 & 图谱 Schema 定义
+知识图谱配置：Schema 定义（节点/关系/属性）。
+共享设置（Neo4j、路径）从 settings.py 导入。
 """
+from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+# 确保项目根目录在 sys.path 中
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from settings import (  # noqa: E402, F401
+    PROJECT_DIR, DATA_DIR,
+    NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
+)
 
 # ---------------------------------------------------------------------------
 # 路径
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = BASE_DIR.parent
-DATA_PATH = PROJECT_DIR / "data" / "medical.json"
-
-# ---------------------------------------------------------------------------
-# Neo4j 默认连接参数
-# ---------------------------------------------------------------------------
-NEO4J_URI = "bolt://127.0.0.1:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "neo4j"
+DATA_PATH = DATA_DIR / "medical.json"
 
 # ---------------------------------------------------------------------------
 # 图谱 Schema：7 类节点

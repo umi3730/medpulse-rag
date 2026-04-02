@@ -12,11 +12,10 @@ import time
 from config import GENERATION_SYSTEM_PROMPT
 
 try:
-    from langchain_ollama import ChatOllama
     from langchain_core.messages import HumanMessage, SystemMessage
-    HAS_LANGCHAIN = True
+    HAS_LANGCHAIN_CORE = True
 except ImportError:
-    HAS_LANGCHAIN = False
+    HAS_LANGCHAIN_CORE = False
 
 log = logging.getLogger("graphrag")
 
@@ -24,12 +23,12 @@ log = logging.getLogger("graphrag")
 class GraphRAGGenerator:
     """基于图谱上下文的 LLM 答案生成。"""
 
-    def __init__(self, llm: ChatOllama | None = None):
+    def __init__(self, llm=None):
         self.llm = llm
 
     @property
     def available(self) -> bool:
-        return self.llm is not None and HAS_LANGCHAIN
+        return self.llm is not None and HAS_LANGCHAIN_CORE
 
     def generate(self, question: str, context_text: str) -> dict:
         """

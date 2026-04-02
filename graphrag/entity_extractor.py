@@ -12,11 +12,10 @@ import re
 from config import ENTITY_EXTRACT_PROMPT
 
 try:
-    from langchain_ollama import ChatOllama
     from langchain_core.messages import HumanMessage, SystemMessage
-    HAS_LANGCHAIN = True
+    HAS_LANGCHAIN_CORE = True
 except ImportError:
-    HAS_LANGCHAIN = False
+    HAS_LANGCHAIN_CORE = False
 
 log = logging.getLogger("graphrag")
 
@@ -26,12 +25,12 @@ _VALID_ENTITY_TYPES = {"disease", "symptom", "drug", "check", "food", "departmen
 class EntityExtractor:
     """从问句中提取医疗实体（仅实体，不含意图）。"""
 
-    def __init__(self, llm: ChatOllama | None = None):
+    def __init__(self, llm=None):
         self.llm = llm
 
     @property
     def available(self) -> bool:
-        return self.llm is not None and HAS_LANGCHAIN
+        return self.llm is not None and HAS_LANGCHAIN_CORE
 
     def extract(self, question: str) -> list[dict] | None:
         """

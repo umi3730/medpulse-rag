@@ -63,8 +63,8 @@ async def lifespan(app: FastAPI):
         neo4j_uri=cfg["neo4j_uri"],
         neo4j_user=cfg["neo4j_user"],
         neo4j_password=cfg["neo4j_password"],
-        ollama_model=cfg["ollama_model"],
-        ollama_url=cfg["ollama_url"],
+        llm_model=cfg["llm_model"],
+        llm_base_url=cfg["llm_base_url"],
         answer_mode=cfg["answer_mode"],
         debug=True,
     )
@@ -75,8 +75,8 @@ async def lifespan(app: FastAPI):
             neo4j_uri=cfg["neo4j_uri"],
             neo4j_user=cfg["neo4j_user"],
             neo4j_password=cfg["neo4j_password"],
-            ollama_model=cfg["ollama_model"],
-            ollama_url=cfg["ollama_url"],
+            llm_model=cfg["llm_model"],
+            llm_base_url=cfg["llm_base_url"],
             debug=True,
         )
         log.info("GraphRAGBot 初始化完成 (available=%s)", _graphrag_bot.available)
@@ -224,22 +224,44 @@ def main():
     parser = argparse.ArgumentParser(description="医药知识图谱问答 API 服务")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--neo4j-uri", default="bolt://127.0.0.1:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="neo4j")
-    parser.add_argument("--ollama-model", default="qwen3:8b")
-    parser.add_argument("--ollama-url", default="http://localhost:11434")
+    parser.add_argument("--neo4j-uri", default=None)
+    parser.add_argument("--neo4j-user", default=None)
+    parser.add_argument("--neo4j-password", "--password", default=None)
+    parser.add_argument("--llm-provider", default=None, help="LLM 提供商: ollama/openai/anthropic")
+    parser.add_argument("--llm-model", default=None, help="LLM 模型名称")
+    parser.add_argument("--llm-base-url", default=None, help="LLM API 地址")
+    parser.add_argument("--llm-api-key", default=None, help="LLM API Key (商业 API)")
     parser.add_argument("--answer-mode", default="template", choices=["template", "llm"])
+    # 向后兼容
+    parser.add_argument("--ollama-model", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--ollama-url", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
+    # 导入 settings 获取默认值
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import settings
+
+    # 如果指定了 provider，覆盖环境变量
+    if args.llm_provider:
+        import os
+        os.environ["LLM_PROVIDER"] = args.llm_provider
+    if args.llm_api_key:
+        import os
+        os.environ["OPENAI_API_KEY"] = args.llm_api_key
+        os.environ["ANTHROPIC_API_KEY"] = args.llm_api_key
+
+    # 优先用新参数，兼容旧参数，最后用 settings 默认值
+    llm_model = args.llm_model or args.ollama_model or settings.LLM_MODEL
+    llm_base_url = args.llm_base_url or args.ollama_url or settings.LLM_BASE_URL
+
     app.state.bot_config = {
-        "neo4j_uri": args.neo4j_uri,
-        "neo4j_user": args.neo4j_user,
-        "neo4j_password": args.neo4j_password,
-        "ollama_model": args.ollama_model,
-        "ollama_url": args.ollama_url,
+        "neo4j_uri": args.neo4j_uri or settings.NEO4J_URI,
+        "neo4j_user": args.neo4j_user or settings.NEO4J_USER,
+        "neo4j_password": args.neo4j_password or settings.NEO4J_PASSWORD,
+        "llm_model": llm_model,
+        "llm_base_url": llm_base_url,
         "answer_mode": args.answer_mode,
     }
 

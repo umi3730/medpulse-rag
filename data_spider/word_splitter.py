@@ -11,14 +11,21 @@
 
 import re
 import logging
+import sys
 from pathlib import Path
 
+# 确保项目根目录在 sys.path 中
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from settings import create_llm  # noqa: E402
+
 try:
-    from langchain_ollama import ChatOllama
     from langchain_core.messages import HumanMessage, SystemMessage
-    HAS_LANGCHAIN = True
+    HAS_LANGCHAIN_CORE = True
 except ImportError:
-    HAS_LANGCHAIN = False
+    HAS_LANGCHAIN_CORE = False
 
 log = logging.getLogger("spider")
 
@@ -119,21 +126,24 @@ class LLMWordSplitter:
         if self.dict_cutter.available:
             log.info("疾病词典已加载 (%d 词条)，可用于降级分词", len(self.dict_cutter.word_dict))
         # 初始化 LLM（第一级）
-        if not HAS_LANGCHAIN:
-            log.warning("langchain_ollama 未安装，将使用词典/简单分割")
+        if not HAS_LANGCHAIN_CORE:
+            log.warning("langchain-core 未安装，将使用词典/简单分割")
             return
         try:
-            self.llm = ChatOllama(
+            self.llm = create_llm(
                 model=model,
                 base_url=base_url,
                 temperature=0,
-                num_predict=256,
+                max_tokens=256,
             )
+            if self.llm is None:
+                log.warning("LLM 依赖未安装，将使用词典/简单分割")
+                return
             # 轻量连通性测试
             self.llm.invoke("hi")
-            log.info("Ollama (%s) 连接成功，将使用 LLM 分词", model)
+            log.info("LLM (%s) 连接成功，将使用 LLM 分词", model)
         except Exception as e:
-            log.warning("Ollama 不可用 (%s)，将使用词典/简单分割", e)
+            log.warning("LLM 不可用 (%s)，将使用词典/简单分割", e)
             self.llm = None
 
     # ------------------------------------------------------------------
