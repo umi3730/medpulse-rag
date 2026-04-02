@@ -33,21 +33,44 @@ interface FGEdge {
 }
 
 export default function GraphPanel({ graphData }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fgRef = useRef<any>(null)
+  const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null)
   const [dimensions, setDimensions] = useState({ width: 400, height: 400 })
   const [data, setData] = useState<{ nodes: FGNode[]; links: FGEdge[] }>({ nodes: [], links: [] })
 
-  // 跟踪容器尺寸
+  // 回调 ref — 元素挂载/卸载时自动触发
+  const containerRef = useCallback((el: HTMLDivElement | null) => {
+    setContainerEl(el)
+  }, [])
+
+  // 跟踪容器尺寸（依赖 containerEl，元素变化时重新绑定）
   useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
+    if (!containerEl) return
+
+    // 立即测量一次
+    const measure = () => {
+      const rect = containerEl.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) {
+        setDimensions({ width: rect.width, height: rect.height })
+      }
+    }
+    measure()
+    // 延迟再测一次（确保 flex 布局已完成）
+    const raf = requestAnimationFrame(measure)
+
     const obs = new ResizeObserver(entries => {
       const { width, height } = entries[0].contentRect
-      setDimensions({ width, height })
+      if (width > 0 && height > 0) {
+        setDimensions({ width, height })
+      }
     })
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [])
+    obs.observe(containerEl)
+    return () => {
+      obs.disconnect()
+      cancelAnimationFrame(raf)
+    }
+  }, [containerEl])
 
   // 图谱数据变化时更新
   useEffect(() => {
@@ -59,6 +82,12 @@ export default function GraphPanel({ graphData }: Props) {
       nodes: graphData.nodes.map(n => ({ ...n })),
       links: graphData.edges.map(e => ({ ...e })),
     })
+    // 新数据到来时重新居中
+    setTimeout(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fg = fgRef.current as any
+      if (fg?.zoomToFit) fg.zoomToFit(400, 40)
+    }, 500)
   }, [graphData])
 
   // 点击节点 → 加载邻居
@@ -108,6 +137,7 @@ export default function GraphPanel({ graphData }: Props) {
       </div>
 
       <ForceGraph2D
+        ref={fgRef}
         width={dimensions.width}
         height={dimensions.height}
         graphData={data}

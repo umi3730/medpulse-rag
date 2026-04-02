@@ -96,7 +96,7 @@ function App() {
                   <GraphRAGDebugPanel debug={ragDebug} />
                 )}
               </TabsContent>
-              <TabsContent value="graph" className="flex-1 overflow-hidden m-0">
+              <TabsContent value="graph" className="flex-1 overflow-hidden m-0" keepMounted>
                 <GraphPanel graphData={mode === 'basic' ? basicGraph : ragGraph} />
               </TabsContent>
             </Tabs>
