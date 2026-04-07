@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+node_modules/
+web/dist/
+.DS_Store
+.spider_progress.json
+*.egg-info/
+dist/
+build/
