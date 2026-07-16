@@ -7,6 +7,8 @@ lxml>=4.9.0
 
 # LLM 集成（LangChain 核心）
 langchain-core>=0.3.0
+langgraph>=0.2.0
+qdrant-client>=1.12.0
 
 # LLM 提供商（按需安装，至少选一个）
 langchain-ollama>=0.3.0         # 本地 Ollama（默认）
@@ -15,6 +17,7 @@ langchain-ollama>=0.3.0         # 本地 Ollama（默认）
 
 # 知识图谱构建 & 问答
 py2neo>=2021.2.3
+neo4j>=6.2.0
 
 # 实体归一化（模糊匹配）
 rapidfuzz>=3.0.0

@@ -162,11 +162,11 @@ web/src/
 
 ```bash
 # 终端 1：启动后端
-cd MedicalGraphRAGSystem
+cd medpulse-rag
 python3 -m server.app --port 8000
 
 # 终端 2：启动前端 (Vite dev server)
-cd MedicalGraphRAGSystem/web
+cd medpulse-rag/web
 npm run dev
 # → http://localhost:5173  (自动代理 /api → :8000)
 ```

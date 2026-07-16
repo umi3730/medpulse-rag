@@ -42,6 +42,16 @@ export interface ChatMessage {
 
 // ---- GraphRAG ----
 export interface GraphRAGDebugInfo {
+  workflow: string
+  intent: string
+  intents: string[]
+  relation_filters: string[]
+  retrieval_mode: string
+  memory_turn_count: number
+  memory_context_preview: string
+  memory_entities: Record<string, string[]>
+  vector_hit_count: number
+  vector_context_preview: string
   entities_raw: Array<{ name: string; type: string }>
   entities_normalized: Record<string, string[]>
   subgraph_stats: {
@@ -54,6 +64,7 @@ export interface GraphRAGDebugInfo {
   generation_time_ms: number
   model_used: string
   total_time_ms: number
+  error?: string
 }
 
 export interface GraphRAGChatResponse {

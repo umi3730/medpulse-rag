@@ -7,9 +7,9 @@ Neo4j 图谱构建器：批量创建节点、关系和索引。
 """
 
 import logging
-from py2neo import Graph
+from neo4j_client import Neo4jGraph as Graph
 
-from config import REL_TYPES
+from config import NEO4J_DATABASE, REL_TYPES
 
 log = logging.getLogger("kg")
 
@@ -20,9 +20,9 @@ BATCH_SIZE = 500
 class GraphBuilder:
     """封装 Neo4j 写入操作。"""
 
-    def __init__(self, uri, user, password):
-        log.info("连接 Neo4j: %s (用户: %s)", uri, user)
-        self.graph = Graph(uri, auth=(user, password))
+    def __init__(self, uri, user, password, database=NEO4J_DATABASE):
+        log.info("连接 Neo4j: %s (用户: %s, 数据库: %s)", uri, user, database)
+        self.graph = Graph(uri, auth=(user, password), name=database)
         log.info("Neo4j 连接成功")
 
     # ==================================================================

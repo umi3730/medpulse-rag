@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+.venv/
 node_modules/
 web/dist/
 .DS_Store
@@ -9,3 +10,8 @@ web/dist/
 *.egg-info/
 dist/
 build/
+*.sqlite3
+*.sqlite
+*.db
+data/qdrant/
+logs/

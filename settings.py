@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # coding: utf-8
 """
-MedicalGraphRAGSystem 统一配置
+知脉 MedPulse 统一配置
 
 所有共享设置（Neo4j、LLM、路径等）的唯一来源。
 通过环境变量或 .env 文件配置，模块特有配置保留在各模块的 config.py 中。
@@ -30,8 +30,14 @@ DATA_DIR = PROJECT_DIR / "data"
 # ---------------------------------------------------------------------------
 # Neo4j
 # ---------------------------------------------------------------------------
-NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://127.0.0.1:7687")
+def _normalize_neo4j_uri(uri: str) -> str:
+    """Keep a single place for future Neo4j URI compatibility tweaks."""
+    return uri
+
+
+NEO4J_URI = _normalize_neo4j_uri(os.environ.get("NEO4J_URI", "bolt://127.0.0.1:7687"))
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
+NEO4J_DATABASE = os.environ.get("NEO4J_DATABASE", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "neo4j")
 
 # ---------------------------------------------------------------------------
@@ -42,6 +48,8 @@ LLM_MODEL = os.environ.get("LLM_MODEL", "qwen3:8b")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434")
 LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0"))
 LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "512"))
+LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "8"))
+LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "0"))
 
 # 商业 API 密钥（仅 openai / anthropic 时需要）
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -94,6 +102,8 @@ def create_llm(
     _base_url = base_url or LLM_BASE_URL
     _temp = temperature if temperature is not None else LLM_TEMPERATURE
     _max_tokens = max_tokens or LLM_MAX_TOKENS
+    _timeout = float(kwargs.pop("timeout", LLM_TIMEOUT))
+    _max_retries = int(kwargs.pop("max_retries", LLM_MAX_RETRIES))
 
     if _provider == "ollama":
         try:
@@ -110,6 +120,7 @@ def create_llm(
 
     elif _provider == "openai":
         try:
+            import httpx
             from langchain_openai import ChatOpenAI
             api_key = kwargs.pop("api_key", None) or OPENAI_API_KEY
             oai_base = kwargs.pop("openai_base_url", None) or OPENAI_BASE_URL or None
@@ -119,6 +130,10 @@ def create_llm(
                 base_url=oai_base,
                 temperature=_temp,
                 max_tokens=_max_tokens,
+                timeout=_timeout,
+                max_retries=_max_retries,
+                http_client=httpx.Client(trust_env=False, timeout=_timeout),
+                http_async_client=httpx.AsyncClient(trust_env=False, timeout=_timeout),
                 **kwargs,
             )
         except ImportError:

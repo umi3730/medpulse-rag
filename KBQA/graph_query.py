@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import logging
 
-from py2neo import Graph
+from neo4j_client import Neo4jGraph as Graph
 
-from .config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
+from .config import NEO4J_URI, NEO4J_USER, NEO4J_DATABASE, NEO4J_PASSWORD
 
 log = logging.getLogger("qa")
 
@@ -18,8 +18,8 @@ class GraphQueryExecutor:
     """执行 Cypher 查询的薄封装层。"""
 
     def __init__(self, uri: str = NEO4J_URI, user: str = NEO4J_USER,
-                 password: str = NEO4J_PASSWORD):
-        self.graph = Graph(uri, auth=(user, password))
+                 password: str = NEO4J_PASSWORD, database: str = NEO4J_DATABASE):
+        self.graph = Graph(uri, auth=(user, password), name=database)
         log.info("Neo4j 连接成功: %s", uri)
 
     def execute(self, query_groups: list[dict]) -> list[dict]:

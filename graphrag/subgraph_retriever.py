@@ -8,10 +8,10 @@ from __future__ import annotations
 import logging
 import time
 
-from py2neo import Graph
+from neo4j_client import Neo4jGraph as Graph
 
 from .config import (
-    NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
+    NEO4J_URI, NEO4J_USER, NEO4J_DATABASE, NEO4J_PASSWORD,
     MAX_HOPS, HOP1_LIMIT, HOP2_LIMIT, HOP2_CANDIDATES,
     DISEASE_PROPERTIES,
 )
@@ -26,10 +26,11 @@ class SubgraphRetriever:
         if graph:
             self.graph = graph
         else:
-            self.graph = Graph(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+            self.graph = Graph(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD), name=NEO4J_DATABASE)
 
     def retrieve(self, entity_dict: dict[str, list[str]],
-                 max_hops: int = MAX_HOPS) -> dict:
+                 max_hops: int = MAX_HOPS,
+                 relation_filters: list[str] | None = None) -> dict:
         """
         检索子图。
 
@@ -57,7 +58,7 @@ class SubgraphRetriever:
 
         # ---- Hop 1: 直接邻居 ----
         for entity_name in all_entities:
-            rows = self._query_neighbors(entity_name, HOP1_LIMIT)
+            rows = self._query_neighbors(entity_name, HOP1_LIMIT, relation_filters)
             for row in rows:
                 self._add_to_graph(row, nodes_map, edges_list, seen_edges)
             self._fetch_disease_properties(entity_name, nodes_map)
@@ -71,7 +72,7 @@ class SubgraphRetriever:
             candidates = (diseases + others)[:HOP2_CANDIDATES]
 
             for node_name in candidates:
-                rows = self._query_neighbors(node_name, HOP2_LIMIT)
+                rows = self._query_neighbors(node_name, HOP2_LIMIT, relation_filters)
                 for row in rows:
                     self._add_to_graph(row, nodes_map, edges_list, seen_edges)
                 if nodes_map.get(node_name, {}).get("label") == "Disease":
@@ -86,22 +87,31 @@ class SubgraphRetriever:
                 "total_nodes": len(nodes_map),
                 "total_edges": len(edges_list),
                 "retrieval_time_ms": round(elapsed, 1),
+                "relation_filters": relation_filters or [],
             },
         }
 
     # ==================================================================
     # 内部查询方法
     # ==================================================================
-    def _query_neighbors(self, name: str, limit: int) -> list[dict]:
+    def _query_neighbors(self, name: str, limit: int,
+                         relation_filters: list[str] | None = None) -> list[dict]:
         """通用邻居查询（双向）。"""
+        rel_clause = " AND type(r) IN $relation_filters" if relation_filters else ""
         cypher = (
             "MATCH (n)-[r]-(m) WHERE n.name = $name "
+            f"{rel_clause} "
             "RETURN labels(n)[0] AS n_label, n.name AS n_name, "
             "type(r) AS r_type, labels(m)[0] AS m_label, m.name AS m_name "
             "LIMIT $limit"
         )
         try:
-            return self.graph.run(cypher, name=name, limit=limit).data()
+            return self.graph.run(
+                cypher,
+                name=name,
+                limit=limit,
+                relation_filters=relation_filters or [],
+            ).data()
         except Exception as e:
             log.error("邻居查询失败 [%s]: %s", name, e)
             return []

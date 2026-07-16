@@ -3,7 +3,7 @@
 """
 FastAPI 后端：提供问答 API、图谱邻居查询和健康检查。
 
-启动: cd MedicalGraphRAGSystem && python3 -m server.app
+启动: cd medpulse-rag && python3 -m server.app
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 import json
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -114,7 +114,7 @@ app.add_middleware(
 async def chat(req: ChatRequest):
     """问答接口：返回回答 + 调试信息 + 图谱数据。"""
     bot = _get_bot()
-    result = bot.chat_detail(req.question)
+    result = bot.chat_detail(req.question, user_id=req.user_id, session_id=req.session_id)
     return result
 
 
@@ -125,17 +125,25 @@ async def graphrag_chat(req: ChatRequest):
     if not bot or not bot.available:
         # 降级到基础问答
         basic = _get_bot()
-        result = basic.chat_detail(req.question)
+        result = basic.chat_detail(req.question, user_id=req.user_id, session_id=req.session_id)
         return GraphRAGChatResponse(
             answer=result["answer"],
             mode="fallback_basic",
-            debug=GraphRAGDebugInfo(),
+            debug=GraphRAGDebugInfo(
+                entities_normalized=result.get("debug", {}).get("entities", {}),
+                subgraph_stats={
+                    "total_nodes": len(result.get("graph_data", {}).get("nodes", [])),
+                    "total_edges": len(result.get("graph_data", {}).get("edges", [])),
+                    "retrieval_time_ms": 0,
+                },
+                model_used="fallback_basic",
+            ),
             graph_data=GraphData(
                 nodes=[GraphNode(**n) for n in result["graph_data"]["nodes"]],
                 edges=[GraphEdge(**e) for e in result["graph_data"]["edges"]],
             ),
         )
-    result = bot.chat_detail(req.question)
+    result = bot.chat_detail(req.question, user_id=req.user_id, session_id=req.session_id)
     return GraphRAGChatResponse(
         answer=result["answer"],
         mode="graphrag",
@@ -145,6 +153,112 @@ async def graphrag_chat(req: ChatRequest):
             edges=[GraphEdge(**e) for e in result["graph_data"]["edges"]],
         ),
     )
+
+
+@app.get("/api/graphrag/memory")
+async def graphrag_memory(
+    user_id: str = Query("anonymous", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+    session_id: str = Query("default", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+):
+    """Return the current local GraphRAG memory snapshot."""
+    bot = _get_graphrag_bot()
+    if not bot or not getattr(bot, "memory_store", None):
+        return {"user_id": user_id, "session_id": session_id, "recent_turns": [], "entities": {}}
+    return bot.memory_store.snapshot(user_id=user_id, session_id=session_id)
+
+
+@app.delete("/api/graphrag/memory")
+async def clear_graphrag_memory(
+    user_id: str = Query("anonymous", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+    session_id: str = Query("default", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+):
+    """Clear the current local GraphRAG memory."""
+    bot = _get_graphrag_bot()
+    if not bot or not getattr(bot, "memory_store", None):
+        return {"turns_deleted": 0, "entities_deleted": 0}
+    return bot.memory_store.clear(user_id=user_id, session_id=session_id)
+
+
+@app.get("/api/graphrag/sessions")
+async def graphrag_sessions(
+    user_id: str = Query("anonymous", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+    limit: int = Query(30, ge=1, le=100),
+):
+    """List persisted GraphRAG sessions for one user."""
+    bot = _get_graphrag_bot()
+    if not bot or not getattr(bot, "memory_store", None):
+        return {"user_id": user_id, "sessions": []}
+    return {
+        "user_id": user_id,
+        "sessions": bot.memory_store.list_sessions(user_id=user_id, limit=limit),
+    }
+
+
+@app.get("/api/graphrag/sessions/{session_id}")
+async def graphrag_session_history(
+    session_id: str,
+    user_id: str = Query("anonymous", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+):
+    """Return the persisted turns of one user-owned session."""
+    if not session_id or len(session_id) > 128 or not all(char.isalnum() or char in "_-" for char in session_id):
+        raise HTTPException(status_code=422, detail="Invalid session_id")
+    bot = _get_graphrag_bot()
+    if not bot or not getattr(bot, "memory_store", None):
+        return {"user_id": user_id, "session_id": session_id, "turns": []}
+    return {
+        "user_id": user_id,
+        "session_id": session_id,
+        "turns": bot.memory_store.get_session_turns(user_id=user_id, session_id=session_id),
+    }
+
+
+@app.get("/api/graphrag/vector/stats")
+async def graphrag_vector_stats():
+    """Return local Qdrant vector store stats."""
+    bot = _get_graphrag_bot()
+    vector_store = getattr(bot, "vector_store", None) if bot else None
+    if not vector_store:
+        return {"available": False, "collection": "", "points_count": 0}
+    return {"available": True, **vector_store.stats()}
+
+
+@app.get("/api/graphrag/vector/search")
+async def graphrag_vector_search(
+    q: str = Query(..., min_length=1),
+    limit: int = 5,
+    user_id: str = Query("anonymous", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+    session_id: str = Query("default", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+):
+    """Search the local Qdrant vector memory."""
+    bot = _get_graphrag_bot()
+    vector_store = getattr(bot, "vector_store", None) if bot else None
+    if not vector_store:
+        return {"available": False, "hits": []}
+    return {
+        "available": True,
+        "hits": vector_store.search(
+            q,
+            user_id=user_id,
+            session_id=session_id,
+            limit=limit,
+        ),
+    }
+
+
+@app.delete("/api/graphrag/vector")
+async def clear_graphrag_vector_store(
+    user_id: str = Query("anonymous", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+    session_id: str = Query("default", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+):
+    """Clear the local Qdrant vector memory collection."""
+    bot = _get_graphrag_bot()
+    vector_store = getattr(bot, "vector_store", None) if bot else None
+    if not vector_store:
+        return {"available": False, "cleared": False}
+    return {
+        "available": True,
+        **vector_store.clear(user_id=user_id, session_id=session_id),
+    }
 
 
 def _sse_event(event: str, data: dict) -> str:
@@ -158,7 +272,7 @@ async def chat_stream(req: ChatRequest):
     bot = _get_bot()
 
     def event_generator():
-        for evt in bot.chat_stream(req.question):
+        for evt in bot.chat_stream(req.question, user_id=req.user_id, session_id=req.session_id):
             yield _sse_event(evt["event"], evt["data"])
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -173,15 +287,34 @@ async def graphrag_chat_stream(req: ChatRequest):
         basic = _get_bot()
 
         def fallback_generator():
-            for evt in basic.chat_stream(req.question):
+            for evt in basic.chat_stream(req.question, user_id=req.user_id, session_id=req.session_id):
                 if evt["event"] == "retrieval":
-                    evt["data"]["mode"] = "fallback_basic"
+                    basic_debug = evt["data"].get("debug", {})
+                    graph_data = evt["data"].get("graph_data", {"nodes": [], "edges": []})
+                    evt["data"] = {
+                        "mode": "fallback_basic",
+                        "debug": {
+                            "entities_raw": [],
+                            "entities_normalized": basic_debug.get("entities", {}),
+                            "subgraph_stats": {
+                                "total_nodes": len(graph_data.get("nodes", [])),
+                                "total_edges": len(graph_data.get("edges", [])),
+                                "retrieval_time_ms": 0,
+                            },
+                            "context_preview": "",
+                            "context_char_count": 0,
+                            "generation_time_ms": 0,
+                            "model_used": "fallback_basic",
+                            "total_time_ms": 0,
+                        },
+                        "graph_data": graph_data,
+                    }
                 yield _sse_event(evt["event"], evt["data"])
 
         return StreamingResponse(fallback_generator(), media_type="text/event-stream")
 
     def event_generator():
-        for evt in bot.chat_stream(req.question):
+        for evt in bot.chat_stream(req.question, user_id=req.user_id, session_id=req.session_id):
             yield _sse_event(evt["event"], evt["data"])
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -16,7 +16,7 @@ if _project_root not in sys.path:
 
 from settings import (  # noqa: E402, F401
     PROJECT_DIR, DATA_DIR,
-    NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
+    NEO4J_URI, NEO4J_USER, NEO4J_DATABASE, NEO4J_PASSWORD,
 )
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ if _project_root not in sys.path:
 
 # 从统一配置导入共享设置（re-export）
 from settings import (  # noqa: E402, F401
-    NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
+    NEO4J_URI, NEO4J_USER, NEO4J_DATABASE, NEO4J_PASSWORD,
     LLM_MODEL, LLM_BASE_URL,
     LLM_TEMPERATURE, LLM_MAX_TOKENS,
     ENTITY_DICTS, DENY_DICT_PATH, FUZZY_MATCH_THRESHOLD,

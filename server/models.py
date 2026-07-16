@@ -9,6 +9,20 @@ from pydantic import BaseModel, Field
 # ---- 请求 ----
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=500, description="用户问题")
+    user_id: str = Field(
+        "anonymous",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+        description="稳定用户标识；未登录版本由浏览器生成",
+    )
+    session_id: str = Field(
+        "default",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+        description="当前对话会话标识",
+    )
 
 
 # ---- 响应子模型 ----
@@ -55,6 +69,16 @@ class NeighborResponse(BaseModel):
 
 # ---- GraphRAG 响应 ----
 class GraphRAGDebugInfo(BaseModel):
+    workflow: str = "legacy"
+    intent: str = "general"
+    intents: list[str] = []
+    relation_filters: list[str] = []
+    retrieval_mode: str = "none"
+    memory_turn_count: int = 0
+    memory_context_preview: str = ""
+    memory_entities: dict[str, list[str]] = {}
+    vector_hit_count: int = 0
+    vector_context_preview: str = ""
     entities_raw: list[dict] = []
     entities_normalized: dict[str, list[str]] = {}
     subgraph_stats: dict = {}
@@ -63,6 +87,7 @@ class GraphRAGDebugInfo(BaseModel):
     generation_time_ms: float = 0
     model_used: str = "none"
     total_time_ms: float = 0
+    error: str = ""
 
 
 class GraphRAGChatResponse(BaseModel):

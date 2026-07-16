@@ -9,7 +9,7 @@ import json
 import logging
 import re
 
-from .config import ENTITY_EXTRACT_PROMPT
+from .config import ENTITY_DICTS, ENTITY_EXTRACT_PROMPT
 
 try:
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -27,6 +27,7 @@ class EntityExtractor:
 
     def __init__(self, llm=None):
         self.llm = llm
+        self._dict_entities = self._load_dict_entities()
 
     @property
     def available(self) -> bool:
@@ -38,8 +39,12 @@ class EntityExtractor:
 
         返回: [{"name": "糖尿病", "type": "disease"}, ...] 或 None（失败时）
         """
-        if not self.available:
+        question = question.strip()
+        if not question:
             return None
+
+        if not self.available:
+            return self._fallback_extract(question)
         try:
             messages = [
                 SystemMessage(content=ENTITY_EXTRACT_PROMPT),
@@ -47,10 +52,11 @@ class EntityExtractor:
             ]
             resp = self.llm.invoke(messages)
             content = resp.content or ""
-            return self._parse(content)
+            parsed = self._parse(content)
+            return parsed or self._fallback_extract(question)
         except Exception as e:
             log.warning("实体抽取 LLM 调用异常: %s", e)
-            return None
+            return self._fallback_extract(question)
 
     def _parse(self, content: str) -> list[dict] | None:
         """解析 LLM 输出的 JSON。"""
@@ -75,3 +81,41 @@ class EntityExtractor:
                     etype = ""
                 entities.append({"name": ent["name"].strip(), "type": etype})
         return entities if entities else None
+
+    @staticmethod
+    def _load_dict_entities() -> list[tuple[str, str]]:
+        """加载本地实体词典，用作 LLM 抽取失败时的兜底。"""
+        entities: list[tuple[str, str]] = []
+        for etype, fpath in ENTITY_DICTS.items():
+            if not fpath.exists():
+                continue
+            with open(fpath, encoding="utf-8") as fh:
+                for line in fh:
+                    name = line.strip()
+                    if len(name) >= 2:
+                        entities.append((name, etype))
+
+        # 长词优先，避免“糖”之类短词抢走“糖尿病”。
+        entities.sort(key=lambda item: len(item[0]), reverse=True)
+        return entities
+
+    def _fallback_extract(self, question: str) -> list[dict] | None:
+        """基于本地词典做最长子串匹配，避免 GraphRAG 因 JSON 抽取失败直接兜底。"""
+        matched: list[dict] = []
+        occupied: list[tuple[int, int]] = []
+
+        for name, etype in self._dict_entities:
+            start = question.find(name)
+            if start < 0:
+                continue
+            end = start + len(name)
+            if any(not (end <= a or start >= b) for a, b in occupied):
+                continue
+            matched.append({"name": name, "type": etype})
+            occupied.append((start, end))
+            if len(matched) >= 8:
+                break
+
+        if matched:
+            log.info("实体抽取使用本地词典兜底: %s", matched)
+        return matched or None

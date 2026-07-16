@@ -1,5 +1,8 @@
-# QABasedOnMedicaKnowledgeGraph
-self-implement of disease centered Medical graph from zero to full and sever as question answering base. 从无到有搭建一个以疾病为中心的一定规模医药领域知识图谱，并以该知识图谱完成自动问答与分析服务。
+# 知脉 MedPulse
+
+基于医疗知识图谱、GraphRAG 与对话记忆的智能问答系统。从零构建以疾病为中心的医药知识图谱，并基于图谱完成检索、问答与可解释分析。
+
+连接医学知识，生成有据可循的回答。
 
 # 项目介绍
 

@@ -22,6 +22,7 @@ from .entity_normalizer import EntityNormalizer
 from .cypher_generator import CypherGenerator
 from .graph_query import GraphQueryExecutor
 from .answer_formatter import AnswerFormatter
+from graphrag.memory_store import DEFAULT_SESSION_ID, DEFAULT_USER_ID, SQLiteMemoryStore
 
 log = logging.getLogger("qa")
 
@@ -50,6 +51,9 @@ class ChatBot:
             mode=answer_mode,
             llm=self.llm_engine.llm if answer_mode == "llm" else None,
         )
+        self.memory_store = SQLiteMemoryStore()
+        self.user_id = DEFAULT_USER_ID
+        self.session_id = DEFAULT_SESSION_ID
 
         # Level 3 降级组件（懒加载）
         self._fallback_actree = None
@@ -59,11 +63,23 @@ class ChatBot:
     # ==================================================================
     # 公共接口
     # ==================================================================
-    def chat(self, question: str) -> str:
+    def chat(
+        self,
+        question: str,
+        *,
+        user_id: str = DEFAULT_USER_ID,
+        session_id: str = DEFAULT_SESSION_ID,
+    ) -> str:
         """主入口：接收问题，返回回答字符串。"""
-        return self.chat_detail(question)["answer"]
+        return self.chat_detail(question, user_id=user_id, session_id=session_id)["answer"]
 
-    def chat_detail(self, question: str) -> dict:
+    def chat_detail(
+        self,
+        question: str,
+        *,
+        user_id: str = DEFAULT_USER_ID,
+        session_id: str = DEFAULT_SESSION_ID,
+    ) -> dict:
         """
         详细问答接口：返回回答 + 调试信息 + 图谱数据。
 
@@ -87,6 +103,19 @@ class ChatBot:
 
         # Step 1: 语义分析（意图 + 实体）
         intents, entity_dict, level = self._analyze(question)
+        if not intents or not entity_dict:
+            followup = self._build_memory_followup_answer(question, user_id, session_id)
+            if followup:
+                self._remember_turn(question, followup, ["memory_followup"], {}, user_id, session_id)
+                return {
+                    "answer": followup,
+                    "debug": {"level": 4, "intents": ["memory_followup"], "entities": {},
+                              "cypher_queries": [], "result_count": 0},
+                    "graph_data": {"nodes": [], "edges": []},
+                }
+            recovered = self._recover_analysis_from_memory(question, user_id, session_id)
+            if recovered:
+                intents, entity_dict, level = recovered
 
         if self.debug:
             log.info("[DEBUG] 意图: %s | 实体: %s | Level: %d", intents, entity_dict, level)
@@ -120,9 +149,11 @@ class ChatBot:
 
         # Step 5: 提取图谱数据（节点 + 边）
         graph_data = self._extract_graph_data(results)
+        final_answer = answer if answer else DEFAULT_ANSWER
+        self._remember_turn(question, final_answer, intents, entity_dict, user_id, session_id)
 
         return {
-            "answer": answer if answer else DEFAULT_ANSWER,
+            "answer": final_answer,
             "debug": {
                 "level": level,
                 "intents": intents,
@@ -133,7 +164,13 @@ class ChatBot:
             "graph_data": graph_data,
         }
 
-    def chat_stream(self, question: str):
+    def chat_stream(
+        self,
+        question: str,
+        *,
+        user_id: str = DEFAULT_USER_ID,
+        session_id: str = DEFAULT_SESSION_ID,
+    ):
         """
         流式问答接口，yield SSE 事件 dict：
           {"event": "retrieval", "data": {debug, graph_data}}
@@ -149,6 +186,24 @@ class ChatBot:
 
         # Step 1: 语义分析
         intents, entity_dict, level = self._analyze(question)
+        if not intents or not entity_dict:
+            followup = self._build_memory_followup_answer(question, user_id, session_id)
+            if followup:
+                debug_info = {
+                    "level": 4,
+                    "intents": ["memory_followup"],
+                    "entities": {},
+                    "cypher_queries": [],
+                    "result_count": 0,
+                }
+                yield {"event": "retrieval", "data": {"debug": debug_info, "graph_data": {"nodes": [], "edges": []}}}
+                self._remember_turn(question, followup, ["memory_followup"], {}, user_id, session_id)
+                yield {"event": "delta", "data": {"chunk": followup}}
+                yield {"event": "done", "data": {"answer": followup, "total_time_ms": 0}}
+                return
+            recovered = self._recover_analysis_from_memory(question, user_id, session_id)
+            if recovered:
+                intents, entity_dict, level = recovered
         if not intents or not entity_dict:
             yield {"event": "done", "data": {"answer": DEFAULT_ANSWER, "total_time_ms": 0}}
             return
@@ -192,6 +247,7 @@ class ChatBot:
 
         if not full_answer:
             full_answer = DEFAULT_ANSWER
+        self._remember_turn(question, full_answer, intents, entity_dict, user_id, session_id)
 
         total_time = round((time.time() - t0) * 1000, 1)
         yield {"event": "done", "data": {"answer": full_answer, "total_time_ms": total_time}}
@@ -199,6 +255,85 @@ class ChatBot:
     # ==================================================================
     # 图谱数据提取（供前端可视化）
     # ==================================================================
+    def _remember_turn(
+        self,
+        question: str,
+        answer: str,
+        intents: list[str],
+        entities: dict[str, list[str]],
+        user_id: str = DEFAULT_USER_ID,
+        session_id: str = DEFAULT_SESSION_ID,
+    ) -> None:
+        try:
+            self.memory_store.add_turn(
+                question=question,
+                answer=answer,
+                intents=intents,
+                entities=entities,
+                user_id=user_id,
+                session_id=session_id,
+            )
+        except Exception as e:
+            log.warning("KBQA memory update failed: %s", e)
+
+    def _recover_analysis_from_memory(
+        self,
+        question: str,
+        user_id: str = DEFAULT_USER_ID,
+        session_id: str = DEFAULT_SESSION_ID,
+    ) -> tuple[list[str], dict[str, list[str]], int] | None:
+        memory_entities = self.memory_store.get_known_entities(user_id=user_id, session_id=session_id)
+        if not memory_entities:
+            return None
+
+        entity_types = {entity_type for entity_type, names in memory_entities.items() if names}
+        intents = self._keyword_classify(question, entity_types)
+        if not intents and self._is_action_followup(question):
+            if "disease" in entity_types:
+                intents = ["disease_cureway", "disease_prevent"]
+            elif "symptom" in entity_types:
+                intents = ["symptom_disease"]
+
+        if not intents:
+            return None
+        return intents, memory_entities, 4
+
+    def _build_memory_followup_answer(
+        self,
+        question: str,
+        user_id: str = DEFAULT_USER_ID,
+        session_id: str = DEFAULT_SESSION_ID,
+    ) -> str:
+        if not self._is_action_followup(question):
+            return ""
+
+        memory_entities = self.memory_store.get_known_entities(user_id=user_id, session_id=session_id)
+        symptoms = memory_entities.get("symptom", [])
+        if not symptoms:
+            return ""
+
+        symptom_text = "\u3001".join(symptoms[:3])
+        return (
+            f"\u4f60\u4e0a\u4e00\u8f6e\u63d0\u5230\u7684\u662f\u300c{symptom_text}\u300d\u3002"
+            "\u5982\u679c\u75c7\u72b6\u8f83\u8f7b\uff0c\u53ef\u4ee5\u5148\u4f11\u606f\u3001\u8865\u5145\u6c34\u5206\uff0c"
+            "\u907f\u514d\u71ac\u591c\u548c\u996e\u9152\uff0c\u5e76\u89c2\u5bdf\u662f\u5426\u4f34\u968f\u53d1\u70ed\u3001\u5455\u5410\u3001"
+            "\u80a2\u4f53\u9ebb\u6728\u3001\u610f\u8bc6\u5f02\u5e38\u3001\u80f8\u95f7\u7b49\u60c5\u51b5\u3002"
+            "\u5982\u679c\u75c7\u72b6\u7a81\u7136\u52a0\u91cd\u3001\u6301\u7eed\u4e0d\u7f13\u89e3\u3001\u53cd\u590d\u53d1\u4f5c\uff0c"
+            "\u6216\u51fa\u73b0\u4e0a\u8ff0\u5371\u9669\u4fe1\u53f7\uff0c\u5efa\u8bae\u5c3d\u5feb\u5230\u533b\u9662\u5c31\u8bca\uff0c"
+            "\u7531\u533b\u751f\u7ed3\u5408\u4f53\u5f81\u548c\u5fc5\u8981\u68c0\u67e5\u5224\u65ad\u539f\u56e0\u3002"
+            "\u4ee5\u4e0a\u4fe1\u606f\u4ec5\u4f9b\u53c2\u8003\uff0c\u4e0d\u80fd\u66ff\u4ee3\u4e13\u4e1a\u8bca\u7597\u3002"
+        )
+
+    @staticmethod
+    def _is_action_followup(question: str) -> bool:
+        action_words = [
+            "\u600e\u4e48\u529e", "\u548b\u529e", "\u600e\u4e48\u505a",
+            "\u8981\u600e\u4e48\u505a", "\u8be5\u600e\u4e48\u505a", "\u5982\u4f55\u5904\u7406",
+            "\u600e\u4e48\u5904\u7406", "\u9700\u8981\u505a\u4ec0\u4e48", "\u4e0b\u4e00\u6b65",
+            "\u6ce8\u610f\u4ec0\u4e48", "\u8981\u6ce8\u610f",
+        ]
+        return any(word in question for word in action_words)
+
     @staticmethod
     def _extract_graph_data(results: list[dict]) -> dict:
         """从查询结果中提取 nodes 和 edges，用于力导向图可视化。"""
