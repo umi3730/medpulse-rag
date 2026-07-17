@@ -1,0 +1,15 @@
+{
+  "documents": [
+    {"id": "hypertension_symptom", "text": "高血压常见表现可能包括头痛、头晕，部分患者也可能没有明显症状。"},
+    {"id": "diabetes_diet", "text": "糖尿病患者的饮食管理通常需要关注总能量、碳水化合物和规律进餐。"},
+    {"id": "pneumonia_check", "text": "怀疑肺炎时，医生可能结合胸部影像、血常规等检查进行判断。"},
+    {"id": "asthma_department", "text": "哮喘通常可前往呼吸内科就诊。"},
+    {"id": "software_build", "text": "前端项目可以通过 TypeScript 和 Vite 完成生产构建。"}
+  ],
+  "queries": [
+    {"query": "血压高的人会有哪些不舒服？", "expected_id": "hypertension_symptom"},
+    {"query": "血糖异常平时吃东西要注意什么？", "expected_id": "diabetes_diet"},
+    {"query": "肺部感染需要查哪些项目？", "expected_id": "pneumonia_check"},
+    {"query": "喘息应该去医院看哪个科？", "expected_id": "asthma_department"}
+  ]
+}

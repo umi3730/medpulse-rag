@@ -28,7 +28,7 @@ if _project_root not in sys.path:
 
 from server.models import (
     ChatRequest, ChatResponse,
-    NeighborResponse, GraphData, GraphNode, GraphEdge,
+    NeighborResponse, GraphData, GraphNode, GraphEdge, EvidenceItem,
     HealthResponse,
     GraphRAGChatResponse, GraphRAGDebugInfo,
 )
@@ -152,6 +152,7 @@ async def graphrag_chat(req: ChatRequest):
             nodes=[GraphNode(**n) for n in result["graph_data"]["nodes"]],
             edges=[GraphEdge(**e) for e in result["graph_data"]["edges"]],
         ),
+        evidence=[EvidenceItem(**item) for item in result.get("evidence", [])],
     )
 
 
@@ -308,6 +309,7 @@ async def graphrag_chat_stream(req: ChatRequest):
                             "total_time_ms": 0,
                         },
                         "graph_data": graph_data,
+                        "evidence": [],
                     }
                 yield _sse_event(evt["event"], evt["data"])
 

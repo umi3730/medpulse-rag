@@ -3,14 +3,17 @@
 """Local Qdrant vector store for GraphRAG memory and retrieval snippets."""
 from __future__ import annotations
 
-import hashlib
-import math
 import re
 import uuid
 from pathlib import Path
 from typing import Any
 
 from .memory_store import DEFAULT_SESSION_ID, DEFAULT_USER_ID
+from .embedding_provider import (
+    EmbeddingProvider,
+    HashEmbeddingProvider,
+    create_embedding_provider,
+)
 
 
 DEFAULT_QDRANT_PATH = Path(__file__).resolve().parent.parent / "data" / "qdrant"
@@ -20,13 +23,14 @@ DEFAULT_SCORE_THRESHOLD = 0.30
 
 
 class QdrantVectorStore:
-    """Small wrapper around embedded Qdrant with deterministic local embeddings."""
+    """Embedded Qdrant store backed by a pluggable embedding provider."""
 
     def __init__(
         self,
         path: str | Path = DEFAULT_QDRANT_PATH,
-        collection_name: str = DEFAULT_COLLECTION,
-        vector_size: int = VECTOR_SIZE,
+        collection_name: str | None = None,
+        vector_size: int | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
     ):
         try:
             from qdrant_client import QdrantClient
@@ -34,18 +38,30 @@ class QdrantVectorStore:
         except ImportError as exc:
             raise ImportError("qdrant-client is not installed") from exc
 
+        self.embedding_fallback_reason = ""
+        if embedding_provider is not None:
+            self.embedding_provider = embedding_provider
+        elif vector_size is not None:
+            self.embedding_provider = HashEmbeddingProvider(vector_size)
+        else:
+            try:
+                self.embedding_provider = create_embedding_provider(fallback_to_hash=False)
+            except Exception as exc:
+                self.embedding_provider = HashEmbeddingProvider()
+                self.embedding_fallback_reason = str(exc)
+
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=True)
-        self.collection_name = collection_name
-        self.vector_size = vector_size
+        self.vector_size = self.embedding_provider.dimension
+        self.collection_name = collection_name or self._provider_collection_name()
         self.client = QdrantClient(path=str(self.path))
         self._models = __import__("qdrant_client.models", fromlist=["models"])
 
         existing = {c.name for c in self.client.get_collections().collections}
-        if collection_name not in existing:
+        if self.collection_name not in existing:
             self.client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(size=self.vector_size, distance=Distance.COSINE),
             )
 
     def add_text(
@@ -67,7 +83,7 @@ class QdrantVectorStore:
             points=[
                 models.PointStruct(
                     id=point_id,
-                    vector=self.embed(clean_text),
+                    vector=self.embedding_provider.embed_document(clean_text),
                     payload=payload_data,
                 )
             ],
@@ -83,15 +99,23 @@ class QdrantVectorStore:
         session_id: str = DEFAULT_SESSION_ID,
         entities: dict[str, list[str]] | None = None,
         intents: list[str] | None = None,
+        quality_status: str = "unverified",
     ) -> str:
         entity_text = self._format_entities(entities or {})
-        text = f"用户问题：{question}\n助手回答：{answer}"
+        text = f"用户问题：{question}"
         if entity_text:
             text += f"\n相关实体：{entity_text}"
         return self.add_text(
             text=text,
             payload={
                 "kind": "memory_turn",
+                "memory_kind": "conversation",
+                "quality_status": quality_status,
+                "evidence_eligible": False,
+                "schema_version": 2,
+                "embedding_provider": self.embedding_provider.name,
+                "embedding_model": self.embedding_provider.model_name,
+                "embedding_dimension": self.embedding_provider.dimension,
                 "user_id": user_id,
                 "session_id": session_id,
                 "question": question,
@@ -109,6 +133,7 @@ class QdrantVectorStore:
         session_id: str | None = None,
         limit: int = 5,
         min_score: float | None = DEFAULT_SCORE_THRESHOLD,
+        memory_kind: str | None = "conversation",
     ) -> list[dict[str, Any]]:
         if not query.strip():
             return []
@@ -130,6 +155,13 @@ class QdrantVectorStore:
                     match=models.MatchValue(value=session_id),
                 )
             )
+        if memory_kind:
+            conditions.append(
+                models.FieldCondition(
+                    key="memory_kind",
+                    match=models.MatchValue(value=memory_kind),
+                )
+            )
         if conditions:
             query_filter = models.Filter(
                 must=conditions,
@@ -137,7 +169,7 @@ class QdrantVectorStore:
 
         response = self.client.query_points(
             collection_name=self.collection_name,
-            query=self.embed(query),
+            query=self.embedding_provider.embed_query(query),
             query_filter=query_filter,
             limit=limit,
             with_payload=True,
@@ -170,15 +202,21 @@ class QdrantVectorStore:
             session_id=session_id,
             limit=limit,
             min_score=min_score,
+            memory_kind="conversation",
         )
         parts = []
         for idx, hit in enumerate(hits, start=1):
             payload = hit["payload"]
-            text = str(payload.get("text", "")).strip()
-            if text:
-                parts.append(f"[Vector Memory {idx} | score={hit['score']:.3f}]\n{text[:500]}")
+            question = str(payload.get("question", "")).strip()
+            entities = self._format_entities(payload.get("entities") or {})
+            if question:
+                item = f"[Conversation Recall {idx} | score={hit['score']:.3f}]\n用户曾问：{question[:300]}"
+                if entities:
+                    item += f"\n涉及实体：{entities}"
+                parts.append(item)
         return {
             "context_text": "\n\n".join(parts),
+            "memory_scope": "conversation_only",
             "hits": hits,
         }
 
@@ -235,31 +273,26 @@ class QdrantVectorStore:
             "path": str(self.path),
             "points_count": getattr(info, "points_count", 0) or 0,
             "vectors_count": getattr(info, "vectors_count", None),
+            "embedding_provider": self.embedding_provider.name,
+            "embedding_model": self.embedding_provider.model_name,
+            "embedding_dimension": self.embedding_provider.dimension,
+            "embedding_fallback_reason": self.embedding_fallback_reason,
         }
 
     def close(self) -> None:
         self.client.close()
 
     def embed(self, text: str) -> list[float]:
-        vector = [0.0] * self.vector_size
-        tokens = self._tokens(text)
-        if not tokens:
-            tokens = [text]
-        for token in tokens:
-            digest = hashlib.blake2b(token.encode("utf-8"), digest_size=16).digest()
-            idx = int.from_bytes(digest[:4], "little") % self.vector_size
-            sign = 1.0 if digest[4] % 2 == 0 else -1.0
-            vector[idx] += sign
-        norm = math.sqrt(sum(value * value for value in vector)) or 1.0
-        return [value / norm for value in vector]
+        return self.embedding_provider.embed_document(text)
 
-    @staticmethod
-    def _tokens(text: str) -> list[str]:
-        normalized = text.lower()
-        latin = re.findall(r"[a-z0-9_]+", normalized)
-        chinese = re.findall(r"[\u4e00-\u9fff]", normalized)
-        bigrams = [normalized[i : i + 2] for i in range(max(len(normalized) - 1, 0))]
-        return latin + chinese + bigrams[:512]
+    def _provider_collection_name(self) -> str:
+        identity = (
+            f"{self.embedding_provider.name}_"
+            f"{self.embedding_provider.model_name}_"
+            f"{self.embedding_provider.dimension}"
+        )
+        safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", identity).strip("_").lower()
+        return f"{DEFAULT_COLLECTION}__{safe}"[:255]
 
     @staticmethod
     def _format_entities(entities: dict[str, list[str]]) -> str:

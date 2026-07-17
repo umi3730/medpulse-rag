@@ -21,8 +21,9 @@ from .entity_extractor import EntityExtractor
 from KBQA.entity_normalizer import EntityNormalizer
 from .subgraph_retriever import SubgraphRetriever
 from .context_builder import ContextBuilder
-from .generator import GraphRAGGenerator
+from .generator import GraphRAGGenerator, build_safe_fallback_answer
 from .memory_store import DEFAULT_SESSION_ID, DEFAULT_USER_ID, SQLiteMemoryStore
+from .question_planner import QuestionPlanner
 from .vector_store import QdrantVectorStore
 
 try:
@@ -82,6 +83,7 @@ class GraphRAGBot:
         self.retriever = SubgraphRetriever(graph=self.graph)
         self.context_builder = ContextBuilder()
         self.generator = GraphRAGGenerator(llm=self.llm)
+        self.planner = QuestionPlanner()
         self.memory_store = SQLiteMemoryStore()
         self.vector_store = None
         try:
@@ -166,6 +168,7 @@ class GraphRAGBot:
             "answer": DEFAULT_ANSWER,
             "debug": empty_debug,
             "graph_data": {"nodes": [], "edges": []},
+            "evidence": [],
         }
         if not question:
             return empty
@@ -177,6 +180,36 @@ class GraphRAGBot:
         memory_context = memory.get("context_text", "")
         memory_entities = memory.get("entities", {})
         memory_turn_count = len(memory.get("recent_turns", []))
+        plan = self.planner.plan(
+            question, has_memory_entities=bool(memory_entities)
+        ).to_dict()
+        if plan["needs_clarification"]:
+            answer = "请先告诉我你指的是哪一种疾病或症状，我再针对它回答。"
+            return {
+                "answer": answer,
+                "debug": {
+                    **empty_debug,
+                    "workflow": "legacy",
+                    "intent": plan["intent"],
+                    "intents": plan["intents"],
+                    "query_plan": plan,
+                    "requested_fields": plan["requested_fields"],
+                    "relation_filters": plan["relation_filters"],
+                    "detail_level": plan["detail_level"],
+                    "needs_clarification": True,
+                    "risk_level": plan["risk_level"],
+                    "retrieval_mode": "clarification",
+                    "memory_turn_count": memory_turn_count,
+                    "memory_scope": "conversation_only",
+                    "evidence_scope": "neo4j_subgraph",
+                    "evidence_count": 0,
+                    "memory_context_preview": memory_context[:500],
+                    "memory_entities": memory_entities,
+                    **self._embedding_debug(),
+                },
+                "graph_data": {"nodes": [], "edges": []},
+                "evidence": [],
+            }
         vector_context = ""
         vector_hits = []
         if self.vector_store is not None:
@@ -217,16 +250,18 @@ class GraphRAGBot:
             return empty
 
         # Stage 3: 多跳子图检索
-        relation_filters = self._classify_relation_filters(question)
+        relation_filters = plan["relation_filters"]
         if is_lifestyle_question(question):
             subgraph = self._empty_subgraph()
             retrieval_mode = "lifestyle_memory"
         else:
-            subgraph = self.retriever.retrieve(entity_dict, relation_filters=relation_filters or None)
-            retrieval_mode = "intent_filtered" if relation_filters else "broad"
-            if relation_filters and not subgraph.get("edges"):
-                subgraph = self.retriever.retrieve(entity_dict)
-                retrieval_mode = "fallback_broad"
+            subgraph = self.retriever.retrieve(
+                entity_dict,
+                relation_filters=relation_filters,
+                property_filters=plan["requested_fields"],
+                include_neighbors=bool(relation_filters),
+            )
+            retrieval_mode = "intent_filtered" if relation_filters else "property_filtered"
         if self.debug:
             log.info("[GraphRAG] 子图: %d 节点, %d 边, %.0fms",
                      subgraph["stats"]["total_nodes"],
@@ -235,42 +270,34 @@ class GraphRAGBot:
 
         # Stage 4: 上下文组装
         context_result = self.context_builder.build(subgraph)
-        extra_contexts = []
+        conversation_parts = []
         if memory_context:
-            extra_contexts.append(f"[Conversation Memory]\n{memory_context}")
+            conversation_parts.append(memory_context)
         if vector_context:
-            extra_contexts.append(f"[Qdrant Vector Memory]\n{vector_context}")
-        if extra_contexts:
-            context_text = context_result.get("context_text", "")
-            extra_text = "\n\n".join(extra_contexts)
-            merged_context = (
-                f"{context_text}\n\n{extra_text}"
-                if context_text
-                else extra_text
-            )
-            context_result = {
-                **context_result,
-                "context_text": merged_context,
-                "context_preview": merged_context[:500],
-                "char_count": len(merged_context),
-            }
+            conversation_parts.append(vector_context)
+        conversation_context = "\n\n".join(conversation_parts)
         if self.debug:
             log.info("[GraphRAG] 上下文: %d 字符", context_result["char_count"])
 
         # Stage 5: LLM 答案生成
-        gen_result = self.generator.generate(question, context_result["context_text"])
+        gen_result = self.generator.generate(
+            question,
+            context_result["context_text"],
+            query_plan=plan,
+            conversation_context=conversation_context,
+        )
         if self.debug:
             log.info("[GraphRAG] 生成: %.0fms, 模型: %s",
                      gen_result["generation_time_ms"], gen_result["model_used"])
 
-        answer = gen_result["answer"] or DEFAULT_ANSWER
+        answer = gen_result["answer"] or build_safe_fallback_answer(question, plan)
         total_time = round((time.time() - t0) * 1000, 1)
 
         try:
             self.memory_store.add_turn(
                 question=question,
                 answer=answer,
-                intents=[],
+                intents=plan["intents"],
                 entities=entity_dict,
                 user_id=user_id,
                 session_id=session_id,
@@ -279,7 +306,7 @@ class GraphRAGBot:
                 self.vector_store.add_memory_turn(
                     question=question,
                     answer=answer,
-                    intents=[],
+                    intents=plan["intents"],
                     entities=entity_dict,
                     user_id=user_id,
                     session_id=session_id,
@@ -297,14 +324,23 @@ class GraphRAGBot:
                 "entities_normalized": entity_dict,
                 "subgraph_stats": subgraph["stats"],
                 "workflow": "legacy",
-                "intent": retrieval_mode,
-                "intents": [],
+                "intent": plan["intent"],
+                "intents": plan["intents"],
+                "query_plan": plan,
+                "requested_fields": plan["requested_fields"],
                 "relation_filters": relation_filters,
+                "detail_level": plan["detail_level"],
+                "needs_clarification": plan["needs_clarification"],
+                "risk_level": plan["risk_level"],
                 "retrieval_mode": retrieval_mode,
                 "memory_turn_count": memory_turn_count,
+                "memory_scope": "conversation_only",
+                "evidence_scope": "neo4j_subgraph",
+                "evidence_count": len(context_result.get("evidence_items", [])),
                 "memory_context_preview": memory_context[:500],
                 "memory_entities": memory_entities,
                 "vector_hit_count": len(vector_hits),
+                **self._embedding_debug(),
                 "vector_context_preview": vector_context[:500],
                 "context_preview": context_result["context_preview"],
                 "context_char_count": context_result["char_count"],
@@ -313,6 +349,7 @@ class GraphRAGBot:
                 "total_time_ms": total_time,
             },
             "graph_data": graph_data,
+            "evidence": context_result.get("evidence_items", []),
         }
 
     def chat_stream(
@@ -339,6 +376,55 @@ class GraphRAGBot:
         memory_context = memory.get("context_text", "")
         memory_entities = memory.get("entities", {})
         memory_turn_count = len(memory.get("recent_turns", []))
+        plan = self.planner.plan(
+            question, has_memory_entities=bool(memory_entities)
+        ).to_dict()
+        if plan["needs_clarification"]:
+            answer = "请先告诉我你指的是哪一种疾病或症状，我再针对它回答。"
+            debug_info = {
+                "entities_raw": [],
+                "entities_normalized": {},
+                "subgraph_stats": {},
+                "workflow": "legacy_stream",
+                "intent": plan["intent"],
+                "intents": plan["intents"],
+                "query_plan": plan,
+                "requested_fields": plan["requested_fields"],
+                "relation_filters": plan["relation_filters"],
+                "detail_level": plan["detail_level"],
+                "needs_clarification": True,
+                "risk_level": plan["risk_level"],
+                "retrieval_mode": "clarification",
+                "memory_turn_count": memory_turn_count,
+                "memory_scope": "conversation_only",
+                "evidence_scope": "neo4j_subgraph",
+                "evidence_count": 0,
+                "memory_context_preview": memory_context[:500],
+                "memory_entities": memory_entities,
+                "vector_hit_count": 0,
+                **self._embedding_debug(),
+                "vector_context_preview": "",
+                "context_preview": "",
+                "context_char_count": 0,
+                "generation_time_ms": 0,
+                "model_used": "none",
+                "total_time_ms": round((time.time() - t0) * 1000, 1),
+            }
+            yield {
+                "event": "retrieval",
+                "data": {
+                    "debug": debug_info,
+                    "graph_data": {"nodes": [], "edges": []},
+                    "evidence": [],
+                    "mode": "graphrag",
+                },
+            }
+            yield {"event": "delta", "data": {"chunk": answer}}
+            yield {
+                "event": "done",
+                "data": {"answer": answer, "total_time_ms": debug_info["total_time_ms"]},
+            }
+            return
         vector_context = ""
         vector_hits = []
         if self.vector_store is not None:
@@ -360,49 +446,44 @@ class GraphRAGBot:
         if not raw_entities:
             raw_entities = self._entities_to_raw(memory_entities)
             if not raw_entities:
-                yield {"event": "done", "data": {"answer": DEFAULT_ANSWER, "total_time_ms": 0}}
+                yield {"event": "done", "data": {
+                    "answer": build_safe_fallback_answer(question, plan),
+                    "total_time_ms": 0,
+                }}
                 return
 
         # Stage 2: 实体归一化
         normalized = self.normalizer.normalize(raw_entities, has_negation=False)
         entity_dict = normalized["entity_dict"]
         if not entity_dict:
-            yield {"event": "done", "data": {"answer": DEFAULT_ANSWER, "total_time_ms": 0}}
+            yield {"event": "done", "data": {
+                "answer": build_safe_fallback_answer(question, plan),
+                "total_time_ms": 0,
+            }}
             return
 
         # Stage 3: 多跳子图检索
-        relation_filters = self._classify_relation_filters(question)
+        relation_filters = plan["relation_filters"]
         if is_lifestyle_question(question):
             subgraph = self._empty_subgraph()
             retrieval_mode = "lifestyle_memory"
         else:
-            subgraph = self.retriever.retrieve(entity_dict, relation_filters=relation_filters or None)
-            retrieval_mode = "intent_filtered" if relation_filters else "broad"
-            if relation_filters and not subgraph.get("edges"):
-                subgraph = self.retriever.retrieve(entity_dict)
-                retrieval_mode = "fallback_broad"
+            subgraph = self.retriever.retrieve(
+                entity_dict,
+                relation_filters=relation_filters,
+                property_filters=plan["requested_fields"],
+                include_neighbors=bool(relation_filters),
+            )
+            retrieval_mode = "intent_filtered" if relation_filters else "property_filtered"
 
         # Stage 4: 上下文组装
         context_result = self.context_builder.build(subgraph)
-        extra_contexts = []
+        conversation_parts = []
         if memory_context:
-            extra_contexts.append(f"[Conversation Memory]\n{memory_context}")
+            conversation_parts.append(memory_context)
         if vector_context:
-            extra_contexts.append(f"[Qdrant Vector Memory]\n{vector_context}")
-        if extra_contexts:
-            context_text = context_result.get("context_text", "")
-            extra_text = "\n\n".join(extra_contexts)
-            merged_context = (
-                f"{context_text}\n\n{extra_text}"
-                if context_text
-                else extra_text
-            )
-            context_result = {
-                **context_result,
-                "context_text": merged_context,
-                "context_preview": merged_context[:500],
-                "char_count": len(merged_context),
-            }
+            conversation_parts.append(vector_context)
+        conversation_context = "\n\n".join(conversation_parts)
 
         # 构建图谱可视化数据
         graph_data = self._build_graph_data(subgraph)
@@ -413,14 +494,23 @@ class GraphRAGBot:
             "entities_normalized": entity_dict,
             "subgraph_stats": subgraph["stats"],
             "workflow": "legacy_stream",
-            "intent": retrieval_mode,
-            "intents": [],
+            "intent": plan["intent"],
+            "intents": plan["intents"],
+            "query_plan": plan,
+            "requested_fields": plan["requested_fields"],
             "relation_filters": relation_filters,
+            "detail_level": plan["detail_level"],
+            "needs_clarification": plan["needs_clarification"],
+            "risk_level": plan["risk_level"],
             "retrieval_mode": retrieval_mode,
             "memory_turn_count": memory_turn_count,
+            "memory_scope": "conversation_only",
+            "evidence_scope": "neo4j_subgraph",
+            "evidence_count": len(context_result.get("evidence_items", [])),
             "memory_context_preview": memory_context[:500],
             "memory_entities": memory_entities,
             "vector_hit_count": len(vector_hits),
+            **self._embedding_debug(),
             "vector_context_preview": vector_context[:500],
             "context_preview": context_result["context_preview"],
             "context_char_count": context_result["char_count"],
@@ -430,12 +520,22 @@ class GraphRAGBot:
         }
         yield {
             "event": "retrieval",
-            "data": {"debug": debug_info, "graph_data": graph_data, "mode": "graphrag"},
+            "data": {
+                "debug": debug_info,
+                "graph_data": graph_data,
+                "evidence": context_result.get("evidence_items", []),
+                "mode": "graphrag",
+            },
         }
 
         # Stage 5: 流式 LLM 生成
         full_answer = ""
-        for chunk in self.generator.stream(question, context_result["context_text"]):
+        for chunk in self.generator.stream(
+            question,
+            context_result["context_text"],
+            query_plan=plan,
+            conversation_context=conversation_context,
+        ):
             if isinstance(chunk, dict):
                 # 生成结束的元数据
                 break
@@ -443,13 +543,13 @@ class GraphRAGBot:
             yield {"event": "delta", "data": {"chunk": chunk}}
 
         if not full_answer:
-            full_answer = DEFAULT_ANSWER
+            full_answer = build_safe_fallback_answer(question, plan)
 
         try:
             self.memory_store.add_turn(
                 question=question,
                 answer=full_answer,
-                intents=[],
+                intents=plan["intents"],
                 entities=entity_dict,
                 user_id=user_id,
                 session_id=session_id,
@@ -458,7 +558,7 @@ class GraphRAGBot:
                 self.vector_store.add_memory_turn(
                     question=question,
                     answer=full_answer,
-                    intents=[],
+                    intents=plan["intents"],
                     entities=entity_dict,
                     user_id=user_id,
                     session_id=session_id,
@@ -481,6 +581,17 @@ class GraphRAGBot:
                 "retrieval_time_ms": 0,
                 "relation_filters": [],
             },
+        }
+
+    def _embedding_debug(self) -> dict:
+        provider = getattr(self.vector_store, "embedding_provider", None)
+        return {
+            "embedding_provider": getattr(provider, "name", "none"),
+            "embedding_model": getattr(provider, "model_name", "none"),
+            "embedding_dimension": getattr(provider, "dimension", 0),
+            "embedding_fallback_reason": getattr(
+                self.vector_store, "embedding_fallback_reason", ""
+            ),
         }
 
     @staticmethod

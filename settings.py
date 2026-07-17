@@ -26,6 +26,20 @@ except ImportError:
 PROJECT_DIR = Path(__file__).resolve().parent
 DICT_DIR = PROJECT_DIR / "dict"
 DATA_DIR = PROJECT_DIR / "data"
+HF_HOME = Path(os.environ.get("HF_HOME", str(DATA_DIR / "huggingface")))
+os.environ.setdefault("HF_HOME", str(HF_HOME))
+
+EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "sentence_transformers")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
+EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
+EMBEDDING_LOCAL_FILES_ONLY = os.environ.get(
+    "EMBEDDING_LOCAL_FILES_ONLY", "true"
+).lower() in {"1", "true", "yes", "on"}
+EMBEDDING_QUERY_PREFIX = os.environ.get(
+    "EMBEDDING_QUERY_PREFIX",
+    "为这个句子生成表示以用于检索相关文章：",
+)
+EMBEDDING_CACHE_DIR = Path(os.environ.get("EMBEDDING_CACHE_DIR", str(HF_HOME)))
 
 # ---------------------------------------------------------------------------
 # Neo4j
@@ -77,7 +91,7 @@ FUZZY_MATCH_THRESHOLD = int(os.environ.get("FUZZY_MATCH_THRESHOLD", "80"))
 # 通用回答设置
 # ---------------------------------------------------------------------------
 ANSWER_NUM_LIMIT = 20
-DEFAULT_ANSWER = "您好，我是医药智能助理。暂时无法回答您的问题，请尝试换一种方式提问。"
+DEFAULT_ANSWER = "现有资料不足以可靠回答这个问题，请补充具体疾病名称或换一种问法。"
 
 
 # ---------------------------------------------------------------------------

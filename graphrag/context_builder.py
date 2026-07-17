@@ -66,6 +66,7 @@ class ContextBuilder:
                 "source": edge["target"], "source_label": edge["target_label"],
                 "target": edge["source"], "target_label": edge["source_label"],
                 "relationship": edge["relationship"],
+                "evidence": edge.get("evidence", {}),
             })
 
         sections: list[str] = []
@@ -89,6 +90,7 @@ class ContextBuilder:
                     sections.append(section)
 
         context_text = "\n\n".join(sections)
+        evidence_items = self._build_evidence_items(nodes, edges)
 
         # 截断
         if len(context_text) > MAX_CONTEXT_CHARS:
@@ -98,6 +100,7 @@ class ContextBuilder:
             "context_text": context_text,
             "context_preview": context_text[:500],
             "char_count": len(context_text),
+            "evidence_items": evidence_items,
         }
 
     def _build_entity_section(self, name: str, node: dict,
@@ -120,6 +123,15 @@ class ContextBuilder:
                 val_str = val_str[:MAX_PROP_VALUE_LEN] + "..."
             lines.append(f"  {prop_label}: {val_str}")
 
+        evidence = node.get("evidence", {})
+        if evidence and props:
+            lines.append(
+                "  证据元数据: "
+                f"来源={evidence.get('source_name', 'unknown')} | "
+                f"更新={evidence.get('updated_at', 'unknown')} | "
+                f"等级={evidence.get('evidence_level', 'unknown')}"
+            )
+
         # 关系（按类型分组）
         rel_groups: dict[str, list[str]] = {}
         for edge in edges:
@@ -138,3 +150,48 @@ class ContextBuilder:
             lines.append(f"  {rel_label}: {display}")
 
         return "\n".join(lines) if len(lines) > 1 else ""
+
+    @staticmethod
+    def _build_evidence_items(nodes: dict[str, dict], edges: list[dict]) -> list[dict]:
+        items: list[dict] = []
+        seen: set[str] = set()
+        relation_counts: dict[tuple[str, str], int] = {}
+        for name, node in nodes.items():
+            metadata = node.get("evidence", {})
+            for field, value in node.get("properties", {}).items():
+                if not value:
+                    continue
+                evidence_id = f"property:{node.get('label', 'Node')}:{name}:{field}"
+                if evidence_id in seen:
+                    continue
+                seen.add(evidence_id)
+                items.append({
+                    "id": evidence_id,
+                    "kind": "property",
+                    "subject": name,
+                    "predicate": field,
+                    "object": str(value)[:500],
+                    **metadata,
+                })
+
+        for edge in edges:
+            group = (edge.get("source", ""), edge.get("relationship", ""))
+            if relation_counts.get(group, 0) >= MAX_TARGETS_PER_REL:
+                continue
+            evidence_id = (
+                f"relation:{edge.get('source', '')}:"
+                f"{edge.get('relationship', '')}:{edge.get('target', '')}"
+            )
+            if evidence_id in seen:
+                continue
+            seen.add(evidence_id)
+            relation_counts[group] = relation_counts.get(group, 0) + 1
+            items.append({
+                "id": evidence_id,
+                "kind": "relation",
+                "subject": edge.get("source", ""),
+                "predicate": edge.get("relationship", ""),
+                "object": edge.get("target", ""),
+                **edge.get("evidence", {}),
+            })
+        return items

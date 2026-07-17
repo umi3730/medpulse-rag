@@ -8,7 +8,9 @@ import time
 from typing import Any, TypedDict
 
 from .config import DEFAULT_ANSWER
+from .generator import build_safe_fallback_answer
 from .memory_store import DEFAULT_SESSION_ID, DEFAULT_USER_ID, SQLiteMemoryStore
+from .question_planner import INTENT_KEYWORDS, INTENT_RELATIONS, QuestionPlanner
 from .vector_store import QdrantVectorStore
 
 try:
@@ -23,32 +25,8 @@ except ImportError:
 log = logging.getLogger("graphrag")
 
 
-INTENT_RELATIONS: dict[str, list[str]] = {
-    "drug": ["common_drug", "recommand_drug", "drugs_of"],
-    "food": ["do_eat", "no_eat", "recommand_eat"],
-    "check": ["need_check"],
-    "symptom": ["has_symptom", "acompany_with"],
-    "department": ["belongs_to", "dept_belongs_to"],
-}
-
-INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "drug": ("药", "用药", "服用", "片", "胶囊", "治疗"),
-    "food": ("饮食", "吃", "忌口", "食物", "营养", "水果", "蔬菜"),
-    "check": ("检查", "化验", "检测", "筛查", "查什么"),
-    "symptom": ("症状", "表现", "并发", "不舒服", "疼", "痛"),
-    "department": ("科室", "挂号", "看什么科", "哪个科"),
-    "prevent": ("预防", "避免", "注意", "护理"),
-}
-
-
-LIFESTYLE_KEYWORDS = (
-    "\u4f5c\u606f", "\u7761\u7720", "\u71ac\u591c", "\u8fd0\u52a8",
-    "\u953b\u70bc", "\u751f\u6d3b\u4e60\u60ef", "\u65e5\u5e38",
-    "\u751f\u6d3b\u65b9\u5f0f", "\u4f11\u606f", "\u996e\u98df\u4f5c\u606f",
-)
-
 def is_lifestyle_question(question: str) -> bool:
-    return any(keyword in question for keyword in LIFESTYLE_KEYWORDS)
+    return any(keyword in question for keyword in INTENT_KEYWORDS["lifestyle"])
 
 class GraphRAGState(TypedDict, total=False):
     question: str
@@ -57,12 +35,22 @@ class GraphRAGState(TypedDict, total=False):
     started_at: float
     intent: str
     intents: list[str]
+    query_plan: dict
+    requested_fields: list[str]
     relation_filters: list[str]
+    detail_level: str
+    needs_clarification: bool
+    risk_level: str
     memory_context: str
     memory_entities: dict[str, list[str]]
     memory_turn_count: int
     vector_context: str
     vector_hits: list[dict]
+    embedding_provider: str
+    embedding_model: str
+    embedding_dimension: int
+    embedding_fallback_reason: str
+    conversation_context: str
     raw_entities: list[dict]
     entity_dict: dict[str, list[str]]
     subgraph: dict
@@ -100,6 +88,7 @@ class LangGraphRAGFlow:
         self.retriever = retriever
         self.context_builder = context_builder
         self.generator = generator
+        self.planner = QuestionPlanner()
         self.memory_store = memory_store or SQLiteMemoryStore()
         self.vector_store = vector_store
         self.user_id = user_id
@@ -138,6 +127,7 @@ class LangGraphRAGFlow:
         graph = StateGraph(GraphRAGState)
         graph.add_node("load_memory", self._load_memory)
         graph.add_node("classify_intent", self._classify_intent)
+        graph.add_node("clarification_answer", self._clarification_answer)
         graph.add_node("extract_entities", self._extract_entities)
         graph.add_node("normalize_entities", self._normalize_entities)
         graph.add_node("retrieve_subgraph", self._retrieve_subgraph)
@@ -148,7 +138,12 @@ class LangGraphRAGFlow:
 
         graph.set_entry_point("load_memory")
         graph.add_edge("load_memory", "classify_intent")
-        graph.add_edge("classify_intent", "extract_entities")
+        graph.add_conditional_edges(
+            "classify_intent",
+            self._clarification_route,
+            {"continue": "extract_entities", "clarify": "clarification_answer"},
+        )
+        graph.add_edge("clarification_answer", "update_memory")
         graph.add_conditional_edges(
             "extract_entities",
             self._has_entities,
@@ -191,29 +186,40 @@ class LangGraphRAGFlow:
         state["memory_turn_count"] = len(memory.get("recent_turns", []))
         state["vector_context"] = vector.get("context_text", "")
         state["vector_hits"] = vector.get("hits", [])
+        state["embedding_fallback_reason"] = getattr(
+            self.vector_store, "embedding_fallback_reason", ""
+        )
+        provider = getattr(self.vector_store, "embedding_provider", None)
+        state["embedding_provider"] = getattr(provider, "name", "none")
+        state["embedding_model"] = getattr(provider, "model_name", "none")
+        state["embedding_dimension"] = getattr(provider, "dimension", 0)
         return state
 
     def _classify_intent(self, state: GraphRAGState) -> GraphRAGState:
-        question = state["question"]
-        intents = [
-            intent
-            for intent, keywords in INTENT_KEYWORDS.items()
-            if any(keyword in question for keyword in keywords)
-        ]
-        if is_lifestyle_question(question) and "lifestyle" not in intents:
-            intents.append("lifestyle")
-        if not intents:
-            intents = ["general"]
+        plan = self.planner.plan(
+            state["question"],
+            has_memory_entities=bool(state.get("memory_entities")),
+        ).to_dict()
+        state["query_plan"] = plan
+        state["intent"] = plan["intent"]
+        state["intents"] = plan["intents"]
+        state["requested_fields"] = plan["requested_fields"]
+        state["relation_filters"] = plan["relation_filters"]
+        state["detail_level"] = plan["detail_level"]
+        state["needs_clarification"] = plan["needs_clarification"]
+        state["risk_level"] = plan["risk_level"]
+        return state
 
-        relation_filters: list[str] = []
-        for intent in intents:
-            for rel in INTENT_RELATIONS.get(intent, []):
-                if rel not in relation_filters:
-                    relation_filters.append(rel)
-
-        state["intents"] = intents
-        state["intent"] = "+".join(intents)
-        state["relation_filters"] = relation_filters
+    def _clarification_answer(self, state: GraphRAGState) -> GraphRAGState:
+        state["answer"] = "请先告诉我你指的是哪一种疾病或症状，我再针对它回答。"
+        state["retrieval_mode"] = "clarification"
+        state["subgraph"] = {"nodes": [], "edges": [], "stats": {}}
+        state["context_result"] = {"context_preview": "", "char_count": 0}
+        state["gen_result"] = {
+            "answer": state["answer"],
+            "generation_time_ms": 0,
+            "model_used": "none",
+        }
         return state
 
     def _extract_entities(self, state: GraphRAGState) -> GraphRAGState:
@@ -246,13 +252,15 @@ class LangGraphRAGFlow:
             state["retrieval_mode"] = "lifestyle_memory"
             return state
 
-        relation_filters = state.get("relation_filters") or None
-        subgraph = self.retriever.retrieve(state.get("entity_dict", {}), relation_filters=relation_filters)
-        retrieval_mode = "intent_filtered" if relation_filters else "broad"
-
-        if relation_filters and not subgraph.get("edges"):
-            subgraph = self.retriever.retrieve(state.get("entity_dict", {}))
-            retrieval_mode = "fallback_broad"
+        relation_filters = state.get("relation_filters", [])
+        requested_fields = state.get("requested_fields", [])
+        subgraph = self.retriever.retrieve(
+            state.get("entity_dict", {}),
+            relation_filters=relation_filters,
+            property_filters=requested_fields,
+            include_neighbors=bool(relation_filters),
+        )
+        retrieval_mode = "intent_filtered" if relation_filters else "property_filtered"
 
         state["subgraph"] = subgraph
         state["retrieval_mode"] = retrieval_mode
@@ -262,38 +270,38 @@ class LangGraphRAGFlow:
         context_result = self.context_builder.build(state.get("subgraph", {}))
         memory_context = state.get("memory_context", "")
         vector_context = state.get("vector_context", "")
-        extra_contexts = []
+        conversation_parts = []
         if memory_context:
-            extra_contexts.append(f"[Conversation Memory]\n{memory_context}")
+            conversation_parts.append(memory_context)
         if vector_context:
-            extra_contexts.append(f"[Qdrant Vector Memory]\n{vector_context}")
-        if extra_contexts:
-            context_text = context_result.get("context_text", "")
-            extra_text = "\n\n".join(extra_contexts)
-            merged_context = (
-                f"{context_text}\n\n{extra_text}"
-                if context_text
-                else extra_text
-            )
-            context_result = {
-                **context_result,
-                "context_text": merged_context,
-                "context_preview": merged_context[:500],
-                "char_count": len(merged_context),
-            }
+            conversation_parts.append(vector_context)
+        state["conversation_context"] = "\n\n".join(conversation_parts)
         state["context_result"] = context_result
         return state
 
     def _generate_answer(self, state: GraphRAGState) -> GraphRAGState:
         context = state.get("context_result", {}).get("context_text", "")
-        gen_result = self.generator.generate(state["question"], context)
+        gen_result = self.generator.generate(
+            state["question"],
+            context,
+            query_plan=state.get("query_plan"),
+            conversation_context=state.get("conversation_context", ""),
+        )
         state["gen_result"] = gen_result
-        state["answer"] = gen_result.get("answer") or DEFAULT_ANSWER
+        state["answer"] = gen_result.get("answer") or build_safe_fallback_answer(
+            state["question"], state.get("query_plan")
+        )
         return state
 
     def _fallback_answer(self, state: GraphRAGState) -> GraphRAGState:
-        state["answer"] = DEFAULT_ANSWER
-        state.setdefault("gen_result", {"answer": "", "generation_time_ms": 0, "model_used": "none"})
+        state["answer"] = build_safe_fallback_answer(
+            state["question"], state.get("query_plan")
+        )
+        state.setdefault("gen_result", {
+            "answer": state["answer"],
+            "generation_time_ms": 0,
+            "model_used": "deterministic_safe_fallback",
+        })
         state.setdefault("context_result", {"context_preview": "", "char_count": 0})
         state.setdefault("subgraph", {"nodes": [], "edges": [], "stats": {}})
         return state
@@ -323,6 +331,10 @@ class LangGraphRAGFlow:
         return state
 
     @staticmethod
+    def _clarification_route(state: GraphRAGState) -> str:
+        return "clarify" if state.get("needs_clarification") else "continue"
+
+    @staticmethod
     def _has_entities(state: GraphRAGState) -> str:
         return "continue" if state.get("raw_entities") else "fallback"
 
@@ -345,12 +357,24 @@ class LangGraphRAGFlow:
                 "workflow": "langgraph",
                 "intent": state.get("intent", "general"),
                 "intents": state.get("intents", []),
+                "query_plan": state.get("query_plan", {}),
+                "requested_fields": state.get("requested_fields", []),
                 "relation_filters": state.get("relation_filters", []),
+                "detail_level": state.get("detail_level", "standard"),
+                "needs_clarification": state.get("needs_clarification", False),
+                "risk_level": state.get("risk_level", "low"),
                 "retrieval_mode": state.get("retrieval_mode", "none"),
                 "memory_turn_count": state.get("memory_turn_count", 0),
+                "memory_scope": "conversation_only",
+                "evidence_scope": "neo4j_subgraph",
+                "evidence_count": len(context_result.get("evidence_items", [])),
                 "memory_context_preview": state.get("memory_context", "")[:500],
                 "memory_entities": state.get("memory_entities", {}),
                 "vector_hit_count": len(state.get("vector_hits", [])),
+                "embedding_provider": state.get("embedding_provider", "none"),
+                "embedding_model": state.get("embedding_model", "none"),
+                "embedding_dimension": state.get("embedding_dimension", 0),
+                "embedding_fallback_reason": state.get("embedding_fallback_reason", ""),
                 "vector_context_preview": state.get("vector_context", "")[:500],
                 "entities_raw": state.get("raw_entities", []),
                 "entities_normalized": state.get("entity_dict", {}),
@@ -363,6 +387,7 @@ class LangGraphRAGFlow:
                 "error": state.get("error", ""),
             },
             "graph_data": self._build_graph_data(subgraph),
+            "evidence": context_result.get("evidence_items", []),
         }
 
     def _empty_result(self, total_time_ms: float, error: str = "") -> dict:
@@ -372,12 +397,24 @@ class LangGraphRAGFlow:
                 "workflow": "langgraph",
                 "intent": "none",
                 "intents": [],
+                "query_plan": {},
+                "requested_fields": [],
                 "relation_filters": [],
+                "detail_level": "standard",
+                "needs_clarification": False,
+                "risk_level": "low",
                 "retrieval_mode": "none",
                 "memory_turn_count": 0,
+                "memory_scope": "conversation_only",
+                "evidence_scope": "neo4j_subgraph",
+                "evidence_count": 0,
                 "memory_context_preview": "",
                 "memory_entities": {},
                 "vector_hit_count": 0,
+                "embedding_provider": "none",
+                "embedding_model": "none",
+                "embedding_dimension": 0,
+                "embedding_fallback_reason": "",
                 "vector_context_preview": "",
                 "entities_raw": [],
                 "entities_normalized": {},
@@ -390,6 +427,7 @@ class LangGraphRAGFlow:
                 "error": error,
             },
             "graph_data": {"nodes": [], "edges": []},
+            "evidence": [],
         }
 
     @staticmethod

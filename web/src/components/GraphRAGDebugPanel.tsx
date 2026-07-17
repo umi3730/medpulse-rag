@@ -95,6 +95,7 @@ export default function GraphRAGDebugPanel({ debug }: Props) {
   const workflow = debug.workflow || 'legacy'
   const intents = debug.intents?.length ? debug.intents : debug.intent ? debug.intent.split('+') : []
   const relationFilters = debug.relation_filters || []
+  const requestedFields = debug.requested_fields || []
   const memoryEntities = Object.entries(debug.memory_entities || {})
 
   return (
@@ -165,6 +166,20 @@ export default function GraphRAGDebugPanel({ debug }: Props) {
           </div>
 
           <div className="mt-4 grid grid-cols-2 divide-x divide-[#e0e7e4] border-y border-[#e0e7e4] bg-white">
+            <div className="col-span-2 grid grid-cols-3 border-b border-[#e0e7e4]">
+              <div className="px-3 py-2.5">
+                <p className="text-[0.62rem] text-[#84918b]">回答粒度</p>
+                <p className="mt-0.5 text-xs font-semibold text-[#30413b]">{debug.detail_level || 'standard'}</p>
+              </div>
+              <div className="border-x border-[#e0e7e4] px-3 py-2.5">
+                <p className="text-[0.62rem] text-[#84918b]">风险等级</p>
+                <p className="mt-0.5 text-xs font-semibold text-[#30413b]">{debug.risk_level || 'low'}</p>
+              </div>
+              <div className="px-3 py-2.5">
+                <p className="text-[0.62rem] text-[#84918b]">需要澄清</p>
+                <p className="mt-0.5 text-xs font-semibold text-[#30413b]">{debug.needs_clarification ? '是' : '否'}</p>
+              </div>
+            </div>
             <div className="px-3 py-2.5">
               <p className="text-[0.62rem] text-[#84918b]">会话记忆</p>
               <p className="mt-0.5 text-xs font-semibold text-[#30413b]">{debug.memory_turn_count ?? 0} 轮已加载</p>
@@ -172,8 +187,31 @@ export default function GraphRAGDebugPanel({ debug }: Props) {
             <div className="px-3 py-2.5">
               <p className="text-[0.62rem] text-[#84918b]">Qdrant 召回</p>
               <p className="mt-0.5 text-xs font-semibold text-[#30413b]">{debug.vector_hit_count ?? 0} 条命中</p>
+              <p className="mt-1 truncate font-mono text-[0.58rem] text-[#87948e]" title={debug.embedding_model}>
+                {debug.embedding_provider || 'none'} · {debug.embedding_dimension || 0}d
+              </p>
             </div>
           </div>
+
+          <p className="mt-2 text-[0.62rem] leading-5 text-[#7b8983]">
+            记忆用途：{debug.memory_scope || 'conversation_only'} · 医学证据：{debug.evidence_scope || 'neo4j_subgraph'} · 证据条目：{debug.evidence_count ?? 0}
+          </p>
+          <p className="mt-1 truncate font-mono text-[0.61rem] text-[#84918b]" title={debug.embedding_model}>
+            embedding: {debug.embedding_provider || 'none'} / {debug.embedding_model || 'none'} / {debug.embedding_dimension || 0}d
+          </p>
+
+          {requestedFields.length > 0 && (
+            <div className="mt-3">
+              <p className="text-[0.65rem] font-medium text-[#7b8983]">请求字段</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {requestedFields.map(field => (
+                  <Badge key={field} variant="outline" className="rounded-[3px] border-[#d9e2de] bg-white px-2 font-mono text-[0.65rem] text-[#53645d]">
+                    {field}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
 
           {memoryEntities.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">

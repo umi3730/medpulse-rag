@@ -13,7 +13,13 @@ import json
 import logging
 from pathlib import Path
 
-from config import DISEASE_PROPS
+from config import (
+    DEFAULT_EVIDENCE_LEVEL,
+    DEFAULT_SOURCE_NAME,
+    DEFAULT_SOURCE_URL,
+    DEFAULT_UPDATED_AT,
+    DISEASE_PROPS,
+)
 
 log = logging.getLogger("kg")
 
@@ -60,6 +66,10 @@ class DataLoader:
             # ---- 疾病属性 ----
             info = {k: data.get(k, "") for k in DISEASE_PROPS}
             info["name"] = name
+            info["source_name"] = data.get("source_name") or DEFAULT_SOURCE_NAME
+            info["source_url"] = data.get("source_url") or DEFAULT_SOURCE_URL
+            info["updated_at"] = data.get("updated_at") or DEFAULT_UPDATED_AT
+            info["evidence_level"] = data.get("evidence_level") or DEFAULT_EVIDENCE_LEVEL
             # 列表字段转字符串存储
             for k in ("cure_department", "cure_way"):
                 v = info.get(k, "")

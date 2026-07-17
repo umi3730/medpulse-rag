@@ -18,6 +18,12 @@ from settings import (  # noqa: E402, F401
     PROJECT_DIR, DATA_DIR,
     NEO4J_URI, NEO4J_USER, NEO4J_DATABASE, NEO4J_PASSWORD,
 )
+from evidence_metadata import (  # noqa: E402, F401
+    DEFAULT_EVIDENCE_LEVEL,
+    DEFAULT_SOURCE_NAME,
+    DEFAULT_SOURCE_URL,
+    DEFAULT_UPDATED_AT,
+)
 
 # ---------------------------------------------------------------------------
 # 路径
@@ -63,4 +69,8 @@ DISEASE_PROPS = [
     "cure_department", "cure_way", "cure_lasttime",
     "cured_prob", "get_prob", "yibao_status",
     "get_way", "cost_money",
+]
+
+EVIDENCE_PROPS = [
+    "source_name", "source_url", "updated_at", "evidence_level",
 ]

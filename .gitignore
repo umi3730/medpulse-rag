@@ -14,4 +14,7 @@ build/
 *.sqlite
 *.db
 data/qdrant/
+data/huggingface/
+data/pip-cache/
 logs/
+evaluation/results/

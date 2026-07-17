@@ -1,10 +1,13 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { Suspense, lazy, useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { fetchChatSession, fetchChatSessions, streamGraphRAGChat } from '@/api/client'
 import type { ChatSessionSummary } from '@/api/client'
 import { activateChatSession, getChatIdentity, startNewChatSession } from '@/lib/chatIdentity'
-import type { GraphRAGChatMessage, GraphRAGDebugInfo, GraphData } from '@/types'
+import type { EvidenceItem, GraphRAGChatMessage, GraphRAGDebugInfo, GraphData } from '@/types'
+import EvidenceList from '@/components/EvidenceList'
 import { ArrowDown, ArrowUp, BrainCircuit, ChevronRight, GitBranch, History, Loader2, MessageSquarePlus, Network, Route, X } from 'lucide-react'
+
+const MarkdownAnswer = lazy(() => import('@/components/MarkdownAnswer'))
 
 interface Props {
   onResponse: (msg: GraphRAGChatMessage) => void
@@ -166,6 +169,7 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
 
     let debugInfo: GraphRAGDebugInfo | undefined
     let graphData: GraphData | undefined
+    let evidence: EvidenceItem[] | undefined
     let mode: string | undefined
 
     try {
@@ -173,14 +177,15 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
         onRetrieval(data) {
           debugInfo = data.debug as GraphRAGDebugInfo
           graphData = data.graph_data
+          evidence = data.evidence
           mode = data.mode
           setMessages(prev => {
             const updated = [...prev]
             const msg = updated[botIdx.current]
-            if (msg) updated[botIdx.current] = { ...msg, mode, debug: debugInfo, graph_data: graphData }
+            if (msg) updated[botIdx.current] = { ...msg, mode, debug: debugInfo, graph_data: graphData, evidence }
             return updated
           })
-          onResponse({ role: 'assistant', content: '', debug: debugInfo, graph_data: graphData, mode })
+          onResponse({ role: 'assistant', content: '', debug: debugInfo, graph_data: graphData, evidence, mode })
         },
         onDelta(chunk) {
           setMessages(prev => {
@@ -200,6 +205,7 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
                 content: data.answer || msg.content,
                 debug: debugInfo,
                 graph_data: graphData,
+                evidence,
                 mode,
               }
             }
@@ -449,9 +455,16 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
                             </span>
                           )}
                         </div>
-                        <p className={`whitespace-pre-wrap text-[0.94rem] leading-7 text-pretty ${isError ? 'text-rose-800' : 'text-[#2f3d38]'}`}>
-                          {msg.content}
-                        </p>
+                        <Suspense
+                          fallback={(
+                            <p className={`max-w-[65ch] whitespace-pre-wrap text-[0.94rem] leading-7 text-pretty ${isError ? 'text-rose-800' : 'text-[#2f3d38]'}`}>
+                              {msg.content}
+                            </p>
+                          )}
+                        >
+                          <MarkdownAnswer content={msg.content} isError={isError} />
+                        </Suspense>
+                        <EvidenceList evidence={msg.evidence} />
                       </div>
                     )}
                   </article>

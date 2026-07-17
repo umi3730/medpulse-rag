@@ -1,4 +1,4 @@
-import type { ChatResponse, GraphData, GraphRAGChatResponse } from '@/types'
+import type { ChatResponse, EvidenceItem, GraphData, GraphRAGChatResponse } from '@/types'
 import { getChatIdentity } from '@/lib/chatIdentity'
 
 const BASE = '/api'
@@ -68,7 +68,7 @@ export async function fetchChatSession(sessionId: string): Promise<ChatSessionTu
 // SSE 流式接口
 // ---------------------------------------------------------------------------
 export interface SSECallbacks {
-  onRetrieval?: (data: { debug: unknown; graph_data: GraphData; mode?: string }) => void
+  onRetrieval?: (data: { debug: unknown; graph_data: GraphData; evidence?: EvidenceItem[]; mode?: string }) => void
   onDelta?: (chunk: string) => void
   onDone?: (data: { answer: string; total_time_ms: number }) => void
   onError?: (err: Error) => void

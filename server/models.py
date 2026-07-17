@@ -55,6 +55,18 @@ class GraphData(BaseModel):
     edges: list[GraphEdge] = []
 
 
+class EvidenceItem(BaseModel):
+    id: str
+    kind: str
+    subject: str
+    predicate: str
+    object: str
+    source_name: str = "寻医问药网历史数据集"
+    source_url: str = ""
+    updated_at: str = "unknown"
+    evidence_level: str = "legacy_unverified"
+
+
 class ChatResponse(BaseModel):
     answer: str
     debug: DebugInfo
@@ -72,12 +84,24 @@ class GraphRAGDebugInfo(BaseModel):
     workflow: str = "legacy"
     intent: str = "general"
     intents: list[str] = []
+    query_plan: dict = {}
+    requested_fields: list[str] = []
     relation_filters: list[str] = []
+    detail_level: str = "standard"
+    needs_clarification: bool = False
+    risk_level: str = "low"
     retrieval_mode: str = "none"
     memory_turn_count: int = 0
+    memory_scope: str = "conversation_only"
+    evidence_scope: str = "neo4j_subgraph"
+    evidence_count: int = 0
     memory_context_preview: str = ""
     memory_entities: dict[str, list[str]] = {}
     vector_hit_count: int = 0
+    embedding_provider: str = "none"
+    embedding_model: str = "none"
+    embedding_dimension: int = 0
+    embedding_fallback_reason: str = ""
     vector_context_preview: str = ""
     entities_raw: list[dict] = []
     entities_normalized: dict[str, list[str]] = {}
@@ -95,6 +119,7 @@ class GraphRAGChatResponse(BaseModel):
     mode: str = "graphrag"
     debug: GraphRAGDebugInfo
     graph_data: GraphData
+    evidence: list[EvidenceItem] = []
 
 
 # ---- 健康检查 ----

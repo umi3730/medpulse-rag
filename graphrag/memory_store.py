@@ -42,6 +42,9 @@ class SQLiteMemoryStore:
                     answer TEXT NOT NULL,
                     intents_json TEXT NOT NULL DEFAULT '[]',
                     entities_json TEXT NOT NULL DEFAULT '{}',
+                    memory_kind TEXT NOT NULL DEFAULT 'conversation',
+                    quality_status TEXT NOT NULL DEFAULT 'unverified',
+                    evidence_eligible INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL
                 )
                 """
@@ -61,6 +64,9 @@ class SQLiteMemoryStore:
                 """
             )
             self._ensure_column(conn, "memory_turns", "user_id", "TEXT NOT NULL DEFAULT 'anonymous'")
+            self._ensure_column(conn, "memory_turns", "memory_kind", "TEXT NOT NULL DEFAULT 'conversation'")
+            self._ensure_column(conn, "memory_turns", "quality_status", "TEXT NOT NULL DEFAULT 'unverified'")
+            self._ensure_column(conn, "memory_turns", "evidence_eligible", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "memory_entities", "user_id", "TEXT NOT NULL DEFAULT 'anonymous'")
             self._ensure_entity_identity_key(conn)
             conn.execute(
@@ -131,6 +137,9 @@ class SQLiteMemoryStore:
         entities: dict[str, list[str]] | None = None,
         user_id: str = DEFAULT_USER_ID,
         session_id: str = DEFAULT_SESSION_ID,
+        memory_kind: str = "conversation",
+        quality_status: str = "unverified",
+        evidence_eligible: bool = False,
     ) -> None:
         now = self._now()
         clean_entities = self._clean_entities(entities or {})
@@ -138,8 +147,9 @@ class SQLiteMemoryStore:
             conn.execute(
                 """
                 INSERT INTO memory_turns
-                    (user_id, session_id, question, answer, intents_json, entities_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (user_id, session_id, question, answer, intents_json, entities_json,
+                     memory_kind, quality_status, evidence_eligible, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
@@ -148,6 +158,9 @@ class SQLiteMemoryStore:
                     answer,
                     json.dumps(intents or [], ensure_ascii=False),
                     json.dumps(clean_entities, ensure_ascii=False),
+                    memory_kind,
+                    quality_status,
+                    int(evidence_eligible),
                     now,
                 ),
             )
@@ -175,7 +188,8 @@ class SQLiteMemoryStore:
         with self._lock, self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT question, answer, intents_json, entities_json, created_at
+                SELECT question, answer, intents_json, entities_json,
+                       memory_kind, quality_status, evidence_eligible, created_at
                 FROM memory_turns
                 WHERE user_id = ? AND session_id = ?
                 ORDER BY id DESC
@@ -191,6 +205,9 @@ class SQLiteMemoryStore:
                     "answer": row["answer"],
                     "intents": self._loads(row["intents_json"], []),
                     "entities": self._loads(row["entities_json"], {}),
+                    "memory_kind": row["memory_kind"],
+                    "quality_status": row["quality_status"],
+                    "evidence_eligible": bool(row["evidence_eligible"]),
                     "created_at": row["created_at"],
                 }
             )
@@ -243,7 +260,8 @@ class SQLiteMemoryStore:
         with self._lock, self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT question, answer, intents_json, entities_json, created_at
+                SELECT question, answer, intents_json, entities_json,
+                       memory_kind, quality_status, evidence_eligible, created_at
                 FROM memory_turns
                 WHERE user_id = ? AND session_id = ?
                 ORDER BY id ASC
@@ -257,6 +275,9 @@ class SQLiteMemoryStore:
                 "answer": row["answer"],
                 "intents": self._loads(row["intents_json"], []),
                 "entities": self._loads(row["entities_json"], {}),
+                "memory_kind": row["memory_kind"],
+                "quality_status": row["quality_status"],
+                "evidence_eligible": bool(row["evidence_eligible"]),
                 "created_at": row["created_at"],
             }
             for row in rows
@@ -303,13 +324,13 @@ class SQLiteMemoryStore:
             if entity_text:
                 parts.append(f"已知历史实体：{entity_text}")
         if turns:
-            parts.append("最近对话：")
+            parts.append("最近用户问题（仅用于理解上下文，不是医学证据）：")
             for turn in turns[-3:]:
-                parts.append(f"用户：{turn['question']}")
-                parts.append(f"助手：{turn['answer'][:160]}")
+                parts.append(f"- {turn['question']}")
 
         return {
             "context_text": "\n".join(parts),
+            "memory_scope": "conversation_only",
             "recent_turns": turns,
             "entities": entities,
         }
