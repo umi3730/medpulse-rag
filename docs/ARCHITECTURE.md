@@ -42,6 +42,10 @@ React Web
 
 ## 主要工程取舍
 
+### 旧图谱元数据兼容
+
+旧版 Neo4j 节点和关系不一定包含 `source_name`、`source_url`、`updated_at`、`evidence_level` 等可选元数据。检索层通过 `properties(entity)['key']` 动态读取这些字段，避免属性令牌尚不存在时产生 Neo4j 警告；缺失值只归一化为 `legacy`、`unknown`、`legacy_unverified` 等明确默认值，不在检索过程中回写或虚构来源。由当前系统维护的 `EvidenceClaim` 则继续使用显式字段结构。
+
 - 当前规模不引入 Kafka；同步写 SQLite，Qdrant 仅承担语义记忆。
 - 高风险加减量、停药等问题使用确定性兜底，不允许模型自由给出可执行建议。
 - 意图过滤后的关系只检索一跳，避免症状或药物节点继续扩散为高密度子图。
