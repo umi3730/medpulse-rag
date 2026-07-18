@@ -35,7 +35,10 @@ INTENT_FIELDS: dict[str, list[str]] = {
     "cure_rate": ["cured_prob"],
     "susceptible": ["easy_get"],
     "cost": ["cost_money"],
-    "lifestyle": [],
+    # Curated nutrition and exercise guidance is stored as preventive evidence.
+    # Keeping this field explicit also prevents mixed food/lifestyle questions
+    # from being routed to the conversation-memory-only fallback.
+    "lifestyle": ["prevent"],
     "general": ["desc"],
 }
 

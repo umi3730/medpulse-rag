@@ -251,7 +251,7 @@ class GraphRAGBot:
 
         # Stage 3: 多跳子图检索
         relation_filters = plan["relation_filters"]
-        if is_lifestyle_question(question):
+        if is_lifestyle_question(question) and not plan["requested_fields"]:
             subgraph = self._empty_subgraph()
             retrieval_mode = "lifestyle_memory"
         else:
@@ -464,7 +464,7 @@ class GraphRAGBot:
 
         # Stage 3: 多跳子图检索
         relation_filters = plan["relation_filters"]
-        if is_lifestyle_question(question):
+        if is_lifestyle_question(question) and not plan["requested_fields"]:
             subgraph = self._empty_subgraph()
             retrieval_mode = "lifestyle_memory"
         else:

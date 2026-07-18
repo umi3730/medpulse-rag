@@ -237,7 +237,10 @@ class LangGraphRAGFlow:
         return state
 
     def _retrieve_subgraph(self, state: GraphRAGState) -> GraphRAGState:
-        if "lifestyle" in state.get("intents", []):
+        if (
+            "lifestyle" in state.get("intents", [])
+            and not state.get("requested_fields")
+        ):
             state["subgraph"] = {
                 "entities_found": [],
                 "nodes": [],

@@ -35,6 +35,18 @@ class QuestionPlannerTests(unittest.TestCase):
         self.assertEqual(self.planner.plan("简单说说高血压").detail_level, "brief")
         self.assertEqual(self.planner.plan("详细说说高血压").detail_level, "detailed")
 
+    def test_food_and_exercise_also_requests_preventive_evidence(self) -> None:
+        plan = self.planner.plan("高血压患者日常饮食和运动需要注意什么？")
+        self.assertEqual(plan.intents, ["food", "lifestyle"])
+        self.assertEqual(
+            plan.requested_fields,
+            ["do_eat", "no_eat", "recommand_eat", "prevent"],
+        )
+        self.assertEqual(
+            plan.relation_filters,
+            ["do_eat", "no_eat", "recommand_eat"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

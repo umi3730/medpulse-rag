@@ -139,6 +139,19 @@ class LangGraphQueryPlanTests(unittest.TestCase):
         self.assertNotIn("UNVERIFIED_OLD_ANSWER", flow.generator.last_context)
         self.assertIn("UNVERIFIED_OLD_ANSWER", flow.generator.last_conversation_context)
 
+    def test_food_and_exercise_retrieves_preventive_evidence(self) -> None:
+        flow, _, retriever = self.build_flow()
+        response = flow.run("高血压患者日常饮食和运动需要注意什么？")
+        self.assertEqual(
+            response["debug"]["requested_fields"],
+            ["do_eat", "no_eat", "recommand_eat", "prevent"],
+        )
+        self.assertEqual(response["debug"]["retrieval_mode"], "intent_filtered")
+        self.assertEqual(
+            retriever.kwargs["property_filters"],
+            ["do_eat", "no_eat", "recommand_eat", "prevent"],
+        )
+
 
 class StreamingQueryPlanTests(unittest.TestCase):
     def build_bot(self, memory_store: FakeMemoryStore | None = None):
@@ -171,6 +184,16 @@ class StreamingQueryPlanTests(unittest.TestCase):
         self.assertTrue(events[0]["data"]["debug"]["needs_clarification"])
         self.assertIn("哪一种疾病", events[-1]["data"]["answer"])
         self.assertEqual(bot.extractor.calls, 0)
+
+    def test_streaming_food_and_exercise_uses_graph_evidence(self) -> None:
+        bot = self.build_bot()
+        events = list(bot.chat_stream("高血压患者日常饮食和运动需要注意什么？"))
+        retrieval = events[0]["data"]["debug"]
+        self.assertEqual(retrieval["retrieval_mode"], "intent_filtered")
+        self.assertEqual(
+            bot.retriever.kwargs["property_filters"],
+            ["do_eat", "no_eat", "recommand_eat", "prevent"],
+        )
 
 
 if __name__ == "__main__":
