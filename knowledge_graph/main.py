@@ -15,6 +15,7 @@ import argparse
 import logging
 import sys
 import time
+from pathlib import Path
 
 from config import (
     DATA_PATH, NEO4J_URI, NEO4J_USER, NEO4J_DATABASE, NEO4J_PASSWORD, NODE_LABELS,
@@ -90,6 +91,12 @@ def main():
 
     # 1. 加载数据
     log.info("加载数据: %s", args.data)
+    if not Path(args.data).is_file():
+        log.error(
+            "未找到可选旧数据文件 %s。请先运行：python scripts/download_legacy_data.py",
+            args.data,
+        )
+        sys.exit(2)
     loader = DataLoader(args.data)
     nodes, rels, disease_infos = loader.load()
 

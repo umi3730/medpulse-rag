@@ -16,5 +16,6 @@ build/
 data/qdrant/
 data/huggingface/
 data/pip-cache/
+data/medical.json
 logs/
 evaluation/results/

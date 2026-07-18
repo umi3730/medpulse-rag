@@ -111,13 +111,19 @@ OPENAI_API_KEY=your_key
 
 ### 4. 准备 Neo4j 数据
 
-项目保留了原始医疗数据和知识图谱构建脚本。首次使用时，请根据自己的 Neo4j 配置运行：
+仓库不直接提交约 46MB 的上游历史医疗数据。若需要从零复现兼容知识图谱，先按需下载并校验：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\download_legacy_data.py
+```
+
+再根据自己的 Neo4j 配置运行：
 
 ```powershell
 .\.venv\Scripts\python.exe knowledge_graph\main.py
 ```
 
-导入约 4.4 万个实体和约 29 万条关系可能需要较长时间。使用现有 Neo4j 数据库时可跳过此步。
+导入约 4.4 万个实体和约 29 万条关系可能需要较长时间。使用现有 Neo4j 数据库时可跳过此步。历史数据仅用于兼容和技术研究，权威证据样例可独立使用 `knowledge_graph/evidence_importer.py` 导入。
 
 ### 5. 启动后端
 
@@ -160,7 +166,7 @@ npm run dev
 
 ### 权威医学证据
 
-旧 `data/medical.json` 仍作为兼容知识图谱使用，但默认标记为 `legacy_unverified`。新增权威资料采用独立的 `EvidenceClaim` 与 `EvidenceSource` 节点，不覆盖旧疾病属性；同一查询字段存在已核验 claim 时，GraphRAG 优先使用 claim，并展示发布机构、文档章节、定位信息和审核状态。
+可选下载的旧 `data/medical.json` 仅作为兼容知识图谱使用，默认标记为 `legacy_unverified`，且不纳入 Git。新增权威资料采用独立的 `EvidenceClaim` 与 `EvidenceSource` 节点，不覆盖旧疾病属性；同一查询字段存在已核验 claim 时，GraphRAG 优先使用 claim，并展示发布机构、文档章节、定位信息和审核状态。
 
 统一证据记录至少包含疾病、字段、事实陈述、来源链接、发布机构、文档标题、发布日期、访问日期、证据等级和审核状态。`source_verified` 只表示来源与原文已核对，不等于临床专家审核；只有填写审核人和审核日期后才能标记为 `clinically_reviewed`。
 
@@ -225,9 +231,11 @@ npm run lint
 npm run build
 ```
 
+当前后端回归测试共 53 项。更完整的组件职责和可信回答链路见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，数据边界见 [`data/README.md`](data/README.md)。
+
 ## 当前限制
 
-- 原始医学知识主要来自历史互联网数据，缺少统一的来源链接、更新时间和证据等级。
+- 兼容知识图谱主要来自历史互联网数据，缺少统一的来源链接、更新时间和证据等级；该数据不随仓库分发。
 - 当前证据元数据对旧数据使用 `legacy_unverified` 标记，不能等同于临床指南证据。
 - 系统目前使用匿名浏览器身份，不包含账号、登录和 JWT。
 - 历史会话保存文字与记忆，不保存每轮完整图谱快照。
@@ -235,7 +243,7 @@ npm run build
 
 ## 项目来源与致谢
 
-本项目在 [liuhuanyong/QABasedOnMedicalKnowledgeGraph](https://github.com/liuhuanyong/QABasedOnMedicalKnowledgeGraph) 的医疗知识图谱数据、词典和构建脚本基础上继续开发。原项目完成了约 4.4 万个医疗实体和约 29 万条关系的整理，并实现了基于规则的知识图谱问答。
+本项目在 [liuhuanyong/QASystemOnMedicalKG](https://github.com/liuhuanyong/QASystemOnMedicalKG) 的医疗知识图谱数据、词典和构建脚本基础上继续开发。原项目完成了约 4.4 万个医疗实体和约 29 万条关系的整理，并实现了基于规则的知识图谱问答。上游大体积数据与旧项目截图不在本仓库分发，需要时由下载脚本单独获取。
 
 MedPulse 在此基础上新增了 Web 界面、GraphRAG 检索、LangGraph 工作流、LLM 生成、持久化多轮记忆、BGE/Qdrant 语义检索、证据展示、安全兜底和自动化评估。感谢原作者刘焕勇及相关开源项目贡献者。
 
