@@ -7,6 +7,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)](https://react.dev/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Workflow-1C3C3C)](https://langchain-ai.github.io/langgraph/)
 [![Tests](https://img.shields.io/badge/backend_tests-56_passed-2F855A)](#测试与评估)
+[![CI](https://github.com/umi3730/medpulse-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/umi3730/medpulse-rag/actions/workflows/ci.yml)
 
 知脉将医学实体抽取、Neo4j 子图检索、LangGraph 工作流、LLM 回答生成和持久化记忆组合为一套可解释的多轮问答系统。与只把检索文本交给模型的普通 RAG 不同，知脉会规划问题所需字段与关系、限制检索范围、为医学事实分配引用编号，并在输出前拦截没有证据支持的医学断言。
 
