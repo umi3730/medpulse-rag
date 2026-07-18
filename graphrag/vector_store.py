@@ -3,6 +3,7 @@
 """Local Qdrant vector store for GraphRAG memory and retrieval snippets."""
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from pathlib import Path
@@ -16,7 +17,10 @@ from .embedding_provider import (
 )
 
 
-DEFAULT_QDRANT_PATH = Path(__file__).resolve().parent.parent / "data" / "qdrant"
+DEFAULT_QDRANT_PATH = Path(os.environ.get(
+    "QDRANT_PATH",
+    str(Path(__file__).resolve().parent.parent / "data" / "qdrant"),
+))
 DEFAULT_COLLECTION = "medical_graphrag_memory"
 VECTOR_SIZE = 384
 DEFAULT_SCORE_THRESHOLD = 0.30

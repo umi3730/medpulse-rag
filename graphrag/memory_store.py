@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -13,7 +14,10 @@ from typing import Any
 
 DEFAULT_USER_ID = "anonymous"
 DEFAULT_SESSION_ID = "default"
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "memory.sqlite3"
+DEFAULT_DB_PATH = Path(os.environ.get(
+    "MEMORY_DB_PATH",
+    str(Path(__file__).resolve().parent.parent / "data" / "memory.sqlite3"),
+))
 
 
 class SQLiteMemoryStore:

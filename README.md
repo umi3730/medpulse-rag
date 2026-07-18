@@ -6,7 +6,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-GraphRAG-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)](https://react.dev/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Workflow-1C3C3C)](https://langchain-ai.github.io/langgraph/)
-[![Tests](https://img.shields.io/badge/backend_tests-57_passed-2F855A)](#测试与评估)
+[![Tests](https://img.shields.io/badge/backend_tests-58_passed-2F855A)](#测试与评估)
 [![CI](https://github.com/umi3730/medpulse-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/umi3730/medpulse-rag/actions/workflows/ci.yml)
 
 知脉将医学实体抽取、Neo4j 子图检索、LangGraph 工作流、LLM 回答生成和持久化记忆组合为一套可解释的多轮问答系统。与只把检索文本交给模型的普通 RAG 不同，知脉会规划问题所需字段与关系、限制检索范围、为医学事实分配引用编号，并在输出前拦截没有证据支持的医学断言。
@@ -48,7 +48,7 @@
 | 引用完整率 | 1.0000 |
 | 引用忠实度代理指标 | 1.0000 |
 | 无依据断言拦截 | 1.0000 |
-| 后端自动化测试 | 57 项通过 |
+| 后端自动化测试 | 58 项通过 |
 | BGE 改写检索 Recall@1 | 1.00 |
 | 确定性哈希 Recall@1 | 0.50 |
 
@@ -153,14 +153,56 @@ medpulse-rag/
 
 ## 快速开始
 
-### 1. 环境要求
+### 使用 Docker Compose（推荐体验方式）
+
+安装 Docker Desktop 后，无需在宿主机安装 Python、Node.js 或 Neo4j：
+
+```powershell
+git clone https://github.com/umi3730/medpulse-rag.git
+cd medpulse-rag
+Copy-Item .env.example .env
+docker compose up --build -d
+docker compose ps
+```
+
+访问 <http://127.0.0.1:5173>；Neo4j Browser 位于 <http://127.0.0.1:7474>。默认 Compose 凭据为 `neo4j/medpulse-dev`，公开部署前必须通过 `DOCKER_NEO4J_PASSWORD` 修改。
+
+首次启动的 Neo4j 是空库，可导入仓库自带的权威高血压证据样例：
+
+```powershell
+docker compose exec backend python knowledge_graph/evidence_importer.py `
+  data/evidence/hypertension.jsonl --apply
+```
+
+Compose 会启动 `frontend`、`backend`、`neo4j` 三个服务。Nginx 将 `/api` 同源转发给 FastAPI，SQLite、嵌入式 Qdrant 和 Neo4j 数据分别保存在命名卷中。停止与删除容器不会清除数据：
+
+```powershell
+docker compose down
+
+# 明确需要清空全部 Docker 数据时才使用
+docker compose down --volumes
+```
+
+默认镜像使用确定性哈希向量，便于快速构建。如果需要在容器中使用 BGE：
+
+```dotenv
+INSTALL_BGE=true
+DOCKER_EMBEDDING_PROVIDER=sentence_transformers
+EMBEDDING_LOCAL_FILES_ONLY=false
+```
+
+首次构建会安装模型运行依赖，首次启动还需要下载模型，因此耗时和镜像体积都会明显增加。本地 Ollama 默认通过 `host.docker.internal:11434` 访问；使用远程 LLM 时请修改 `DOCKER_LLM_BASE_URL` 及对应 API Key。
+
+### 手动开发环境
+
+#### 1. 环境要求
 
 - Python 3.10+
 - Node.js 20+
 - Neo4j 5.x 或 Neo4j Aura
 - Ollama，或 OpenAI/Anthropic 兼容的 LLM API
 
-### 2. 安装后端
+#### 2. 安装后端
 
 ```powershell
 git clone https://github.com/umi3730/medpulse-rag.git
@@ -193,7 +235,7 @@ LLM_MODEL=qwen3:8b
 LLM_BASE_URL=http://127.0.0.1:11434
 ```
 
-### 3. 准备 Neo4j 数据
+#### 3. 准备 Neo4j 数据
 
 已有 Neo4j 数据库时可以跳过旧数据导入。需要从零复现兼容知识图谱时，先按需下载上游数据：
 
@@ -214,7 +256,7 @@ LLM_BASE_URL=http://127.0.0.1:11434
   data\evidence\hypertension.jsonl --apply
 ```
 
-### 4. 启动项目
+#### 4. 启动项目
 
 后端：
 
@@ -320,7 +362,7 @@ MedPulse 主要新增和重构内容：
 - 用户隔离和完整会话管理。
 - 行内证据引用、无依据断言拦截和高风险安全兜底。
 - EvidenceClaim/EvidenceSource 权威证据模型。
-- 33 题评估集、Embedding 对比和 57 项自动化测试。
+- 33 题评估集、Embedding 对比和 58 项自动化测试。
 
 上游旧截图、爬虫和大体积数据不在本仓库分发。项目保留清晰致谢与数据边界，不将上游数据整理工作声明为原创成果。
 
