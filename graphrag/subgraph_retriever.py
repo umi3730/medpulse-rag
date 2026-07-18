@@ -8,10 +8,11 @@ from __future__ import annotations
 import logging
 import time
 
-from py2neo import Graph
+from neo4j_client import Neo4jGraph as Graph
+from evidence_metadata import normalize_evidence_metadata
 
 from .config import (
-    NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
+    NEO4J_URI, NEO4J_USER, NEO4J_DATABASE, NEO4J_PASSWORD,
     MAX_HOPS, HOP1_LIMIT, HOP2_LIMIT, HOP2_CANDIDATES,
     DISEASE_PROPERTIES,
 )
@@ -26,10 +27,13 @@ class SubgraphRetriever:
         if graph:
             self.graph = graph
         else:
-            self.graph = Graph(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+            self.graph = Graph(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD), name=NEO4J_DATABASE)
 
     def retrieve(self, entity_dict: dict[str, list[str]],
-                 max_hops: int = MAX_HOPS) -> dict:
+                 max_hops: int = MAX_HOPS,
+                 relation_filters: list[str] | None = None,
+                 property_filters: list[str] | None = None,
+                 include_neighbors: bool = True) -> dict:
         """
         检索子图。
 
@@ -53,17 +57,30 @@ class SubgraphRetriever:
 
         nodes_map: dict[str, dict] = {}  # name → {name, label, properties}
         edges_list: list[dict] = []
+        evidence_claims: list[dict] = []
         seen_edges: set[str] = set()
 
         # ---- Hop 1: 直接邻居 ----
         for entity_name in all_entities:
-            rows = self._query_neighbors(entity_name, HOP1_LIMIT)
-            for row in rows:
-                self._add_to_graph(row, nodes_map, edges_list, seen_edges)
-            self._fetch_disease_properties(entity_name, nodes_map)
+            if include_neighbors:
+                rows = self._query_neighbors(entity_name, HOP1_LIMIT, relation_filters)
+                for row in rows:
+                    self._add_to_graph(row, nodes_map, edges_list, seen_edges)
+            self._fetch_disease_properties(entity_name, nodes_map, property_filters)
+            claim_filters = (
+                None if property_filters is None
+                else [field for field in property_filters if field in DISEASE_PROPERTIES]
+            )
+            if claim_filters is None or claim_filters:
+                evidence_claims.extend(self._query_evidence_claims(entity_name, claim_filters))
+
+        # Intent-filtered relations (symptoms, drugs, checks, etc.) are direct
+        # facts about the query entity. Expanding their targets adds unrelated
+        # diseases and can multiply a small result into hundreds of edges.
+        effective_max_hops = 1 if relation_filters else max_hops
 
         # ---- Hop 2: 邻居的邻居 ----
-        if max_hops >= 2:
+        if include_neighbors and effective_max_hops >= 2:
             hop1_names = [n for n in nodes_map if n not in all_entities]
             # 优先扩展 Disease 节点（信息最丰富）
             diseases = [n for n in hop1_names if nodes_map[n].get("label") == "Disease"]
@@ -71,56 +88,128 @@ class SubgraphRetriever:
             candidates = (diseases + others)[:HOP2_CANDIDATES]
 
             for node_name in candidates:
-                rows = self._query_neighbors(node_name, HOP2_LIMIT)
+                rows = self._query_neighbors(node_name, HOP2_LIMIT, relation_filters)
                 for row in rows:
                     self._add_to_graph(row, nodes_map, edges_list, seen_edges)
                 if nodes_map.get(node_name, {}).get("label") == "Disease":
-                    self._fetch_disease_properties(node_name, nodes_map)
+                    self._fetch_disease_properties(node_name, nodes_map, property_filters)
 
         elapsed = (time.time() - t0) * 1000
         return {
             "entities_found": all_entities,
             "nodes": list(nodes_map.values()),
             "edges": edges_list,
+            "evidence_claims": evidence_claims,
             "stats": {
                 "total_nodes": len(nodes_map),
                 "total_edges": len(edges_list),
                 "retrieval_time_ms": round(elapsed, 1),
+                "relation_filters": relation_filters or [],
+                "property_filters": property_filters or [],
+                "effective_max_hops": effective_max_hops,
             },
         }
+
+    def _query_evidence_claims(
+        self, name: str, property_filters: list[str] | None = None
+    ) -> list[dict]:
+        """Return curated document-level claims without altering legacy properties."""
+        predicate_clause = " AND e.predicate IN $predicates" if property_filters else ""
+        cypher = (
+            "MATCH (d:Disease {name: $name})-[:HAS_EVIDENCE]->(e:EvidenceClaim) "
+            "WHERE coalesce(e.review_status, 'unreviewed') <> 'unreviewed' "
+            f"{predicate_clause} "
+            "RETURN e.evidence_id AS evidence_id, d.name AS disease, "
+            "e.predicate AS predicate, e.claim AS claim, "
+            "e.source_name AS source_name, e.source_url AS source_url, "
+            "e.published_at AS updated_at, e.evidence_level AS evidence_level, "
+            "e.publisher AS publisher, e.document_title AS document_title, "
+            "e.section AS section, e.locator AS locator, "
+            "e.review_status AS review_status "
+            "ORDER BY CASE e.evidence_level "
+            "WHEN 'clinical_guideline' THEN 0 WHEN 'official_guidance' THEN 1 "
+            "WHEN 'systematic_review' THEN 2 ELSE 3 END, e.published_at DESC"
+        )
+        try:
+            return self.graph.run(
+                cypher, name=name, predicates=property_filters or []
+            ).data()
+        except Exception as exc:
+            # EvidenceClaim is an additive schema; old databases remain usable.
+            log.debug("权威证据查询不可用 [%s]: %s", name, exc)
+            return []
 
     # ==================================================================
     # 内部查询方法
     # ==================================================================
-    def _query_neighbors(self, name: str, limit: int) -> list[dict]:
+    def _query_neighbors(self, name: str, limit: int,
+                         relation_filters: list[str] | None = None) -> list[dict]:
         """通用邻居查询（双向）。"""
+        rel_clause = " AND type(r) IN $relation_filters" if relation_filters else ""
         cypher = (
             "MATCH (n)-[r]-(m) WHERE n.name = $name "
+            f"{rel_clause} "
             "RETURN labels(n)[0] AS n_label, n.name AS n_name, "
-            "type(r) AS r_type, labels(m)[0] AS m_label, m.name AS m_name "
+            "type(r) AS r_type, labels(m)[0] AS m_label, m.name AS m_name, "
+            "coalesce(r.source_name, n.source_name, m.source_name) AS source_name, "
+            "coalesce(r.source_url, n.source_url, m.source_url) AS source_url, "
+            "coalesce(r.updated_at, n.updated_at, m.updated_at) AS updated_at, "
+            "coalesce(r.evidence_level, n.evidence_level, m.evidence_level) AS evidence_level "
             "LIMIT $limit"
         )
         try:
-            return self.graph.run(cypher, name=name, limit=limit).data()
+            return self.graph.run(
+                cypher,
+                name=name,
+                limit=limit,
+                relation_filters=relation_filters or [],
+            ).data()
         except Exception as e:
             log.error("邻居查询失败 [%s]: %s", name, e)
             return []
 
-    def _fetch_disease_properties(self, name: str, nodes_map: dict):
+    def _fetch_disease_properties(
+        self,
+        name: str,
+        nodes_map: dict,
+        property_filters: list[str] | None = None,
+    ):
         """获取 Disease 节点的丰富属性。"""
         node = nodes_map.get(name)
-        if not node or node.get("label") != "Disease":
+        if node and node.get("label") != "Disease":
             return
-        if node.get("properties"):
+        if node and node.get("properties"):
             return  # 已获取过
 
-        props_clause = ", ".join(f"n.{p} AS {p}" for p in DISEASE_PROPERTIES)
-        cypher = f"MATCH (n:Disease) WHERE n.name = $name RETURN {props_clause}"
+        property_candidates = DISEASE_PROPERTIES if property_filters is None else property_filters
+        properties = [
+            prop for prop in property_candidates
+            if prop in DISEASE_PROPERTIES
+        ]
+        if not properties:
+            return
+        props_clause = ", ".join(f"n.{p} AS {p}" for p in properties)
+        cypher = (
+            "MATCH (n:Disease) WHERE n.name = $name "
+            f"RETURN n.name AS name, {props_clause}, "
+            "n.source_name AS source_name, n.source_url AS source_url, "
+            "n.updated_at AS updated_at, n.evidence_level AS evidence_level"
+        )
         try:
             rows = self.graph.run(cypher, name=name).data()
             if rows:
-                props = {k: v for k, v in rows[0].items() if v}
-                nodes_map[name]["properties"] = props
+                metadata_keys = {
+                    "name", "source_name", "source_url", "updated_at", "evidence_level"
+                }
+                props = {
+                    k: v for k, v in rows[0].items()
+                    if k not in metadata_keys and v
+                }
+                node_data = nodes_map.setdefault(
+                    name, {"name": name, "label": "Disease", "properties": {}}
+                )
+                node_data["properties"] = props
+                node_data["evidence"] = normalize_evidence_metadata(rows[0])
         except Exception as e:
             log.error("属性查询失败 [%s]: %s", name, e)
 
@@ -133,11 +222,22 @@ class SubgraphRetriever:
         n_label = row.get("n_label", "")
         m_label = row.get("m_label", "")
         r_type = row.get("r_type", "")
+        evidence = normalize_evidence_metadata(row)
 
         if n_name and n_name not in nodes_map:
-            nodes_map[n_name] = {"name": n_name, "label": n_label, "properties": {}}
+            nodes_map[n_name] = {
+                "name": n_name,
+                "label": n_label,
+                "properties": {},
+                "evidence": evidence,
+            }
         if m_name and m_name not in nodes_map:
-            nodes_map[m_name] = {"name": m_name, "label": m_label, "properties": {}}
+            nodes_map[m_name] = {
+                "name": m_name,
+                "label": m_label,
+                "properties": {},
+                "evidence": evidence,
+            }
 
         edge_key = f"{n_name}-{r_type}-{m_name}"
         reverse_key = f"{m_name}-{r_type}-{n_name}"
@@ -147,4 +247,5 @@ class SubgraphRetriever:
                 "source": n_name, "source_label": n_label,
                 "target": m_name, "target_label": m_label,
                 "relationship": r_type,
+                "evidence": evidence,
             })

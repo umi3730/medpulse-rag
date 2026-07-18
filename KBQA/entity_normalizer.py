@@ -121,6 +121,21 @@ class EntityNormalizer:
         if name in self.name_to_types:
             return [(name, t) for t in self.name_to_types[name]]
 
+        # A short term contained by several canonical entities is ambiguous. For
+        # example, "流感" must not silently become "嗜血流感杆菌的皮肤感染".
+        search_types = ([expected_type] if expected_type in self.type_to_names else []) + \
+                       [t for t in self.type_to_names if t != expected_type]
+        for etype in search_types:
+            expansions = {
+                candidate for candidate in self.type_to_names[etype]
+                if len(name) >= 2 and name in candidate
+            }
+            if len(expansions) > 1:
+                log.info("实体 '%s' 在 %s 中存在多个扩展，拒绝猜测: %s", name, etype, sorted(expansions)[:5])
+                return []
+            if expansions:
+                break
+
         # Level 2: 子串包含匹配
         results = self._substring_match(name, expected_type)
         if results:
@@ -153,7 +168,8 @@ class EntityNormalizer:
 
         if not candidates:
             return []
-        # 取最长匹配
+        # Prefer the longest canonical name contained in a verbose input. Short
+        # ambiguous abbreviations have already been rejected by _match_entity.
         candidates.sort(key=lambda x: x[2], reverse=True)
         best = candidates[0]
         return [(best[0], best[1])]

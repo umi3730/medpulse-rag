@@ -15,8 +15,11 @@ import argparse
 import logging
 import sys
 import time
+from pathlib import Path
 
-from config import DATA_PATH, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NODE_LABELS
+from config import (
+    DATA_PATH, NEO4J_URI, NEO4J_USER, NEO4J_DATABASE, NEO4J_PASSWORD, NODE_LABELS,
+)
 from data_loader import DataLoader
 from graph_builder import GraphBuilder
 
@@ -74,6 +77,8 @@ def main():
                         help=f"Neo4j 连接地址 (默认 {NEO4J_URI})")
     parser.add_argument("--user", type=str, default=NEO4J_USER,
                         help=f"Neo4j 用户名 (默认 {NEO4J_USER})")
+    parser.add_argument("--database", type=str, default=NEO4J_DATABASE,
+                        help=f"Neo4j 数据库 (默认 {NEO4J_DATABASE})")
     parser.add_argument("--password", type=str, default=NEO4J_PASSWORD,
                         help="Neo4j 密码")
     parser.add_argument("--data", type=str, default=str(DATA_PATH),
@@ -86,12 +91,18 @@ def main():
 
     # 1. 加载数据
     log.info("加载数据: %s", args.data)
+    if not Path(args.data).is_file():
+        log.error(
+            "未找到可选旧数据文件 %s。请先运行：python scripts/download_legacy_data.py",
+            args.data,
+        )
+        sys.exit(2)
     loader = DataLoader(args.data)
     nodes, rels, disease_infos = loader.load()
 
     # 2. 连接 Neo4j
     try:
-        builder = GraphBuilder(args.uri, args.user, args.password)
+        builder = GraphBuilder(args.uri, args.user, args.password, args.database)
     except Exception as e:
         log.error("无法连接 Neo4j: %s", e)
         sys.exit(1)

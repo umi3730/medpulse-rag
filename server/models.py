@@ -9,6 +9,28 @@ from pydantic import BaseModel, Field
 # ---- 请求 ----
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=500, description="用户问题")
+    user_id: str = Field(
+        "anonymous",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+        description="稳定用户标识；未登录版本由浏览器生成",
+    )
+    session_id: str = Field(
+        "default",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+        description="当前对话会话标识",
+    )
+
+
+class SessionRenameRequest(BaseModel):
+    user_id: str = Field(
+        "anonymous", min_length=1, max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+    )
+    title: str = Field(..., min_length=1, max_length=80)
 
 
 # ---- 响应子模型 ----
@@ -41,6 +63,24 @@ class GraphData(BaseModel):
     edges: list[GraphEdge] = []
 
 
+class EvidenceItem(BaseModel):
+    id: str
+    kind: str
+    subject: str
+    predicate: str
+    object: str
+    citation_index: int = 0
+    source_name: str = "寻医问药网历史数据集"
+    source_url: str = ""
+    updated_at: str = "unknown"
+    evidence_level: str = "legacy_unverified"
+    publisher: str = ""
+    document_title: str = ""
+    section: str = ""
+    locator: str = ""
+    review_status: str = "unreviewed"
+
+
 class ChatResponse(BaseModel):
     answer: str
     debug: DebugInfo
@@ -55,6 +95,28 @@ class NeighborResponse(BaseModel):
 
 # ---- GraphRAG 响应 ----
 class GraphRAGDebugInfo(BaseModel):
+    workflow: str = "legacy"
+    intent: str = "general"
+    intents: list[str] = []
+    query_plan: dict = {}
+    requested_fields: list[str] = []
+    relation_filters: list[str] = []
+    detail_level: str = "standard"
+    needs_clarification: bool = False
+    risk_level: str = "low"
+    retrieval_mode: str = "none"
+    memory_turn_count: int = 0
+    memory_scope: str = "conversation_only"
+    evidence_scope: str = "neo4j_subgraph"
+    evidence_count: int = 0
+    memory_context_preview: str = ""
+    memory_entities: dict[str, list[str]] = {}
+    vector_hit_count: int = 0
+    embedding_provider: str = "none"
+    embedding_model: str = "none"
+    embedding_dimension: int = 0
+    embedding_fallback_reason: str = ""
+    vector_context_preview: str = ""
     entities_raw: list[dict] = []
     entities_normalized: dict[str, list[str]] = {}
     subgraph_stats: dict = {}
@@ -63,6 +125,7 @@ class GraphRAGDebugInfo(BaseModel):
     generation_time_ms: float = 0
     model_used: str = "none"
     total_time_ms: float = 0
+    error: str = ""
 
 
 class GraphRAGChatResponse(BaseModel):
@@ -70,6 +133,7 @@ class GraphRAGChatResponse(BaseModel):
     mode: str = "graphrag"
     debug: GraphRAGDebugInfo
     graph_data: GraphData
+    evidence: list[EvidenceItem] = []
 
 
 # ---- 健康检查 ----
