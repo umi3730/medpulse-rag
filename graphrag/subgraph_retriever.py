@@ -57,6 +57,7 @@ class SubgraphRetriever:
 
         nodes_map: dict[str, dict] = {}  # name → {name, label, properties}
         edges_list: list[dict] = []
+        evidence_claims: list[dict] = []
         seen_edges: set[str] = set()
 
         # ---- Hop 1: 直接邻居 ----
@@ -66,6 +67,12 @@ class SubgraphRetriever:
                 for row in rows:
                     self._add_to_graph(row, nodes_map, edges_list, seen_edges)
             self._fetch_disease_properties(entity_name, nodes_map, property_filters)
+            claim_filters = (
+                None if property_filters is None
+                else [field for field in property_filters if field in DISEASE_PROPERTIES]
+            )
+            if claim_filters is None or claim_filters:
+                evidence_claims.extend(self._query_evidence_claims(entity_name, claim_filters))
 
         # Intent-filtered relations (symptoms, drugs, checks, etc.) are direct
         # facts about the query entity. Expanding their targets adds unrelated
@@ -92,6 +99,7 @@ class SubgraphRetriever:
             "entities_found": all_entities,
             "nodes": list(nodes_map.values()),
             "edges": edges_list,
+            "evidence_claims": evidence_claims,
             "stats": {
                 "total_nodes": len(nodes_map),
                 "total_edges": len(edges_list),
@@ -101,6 +109,35 @@ class SubgraphRetriever:
                 "effective_max_hops": effective_max_hops,
             },
         }
+
+    def _query_evidence_claims(
+        self, name: str, property_filters: list[str] | None = None
+    ) -> list[dict]:
+        """Return curated document-level claims without altering legacy properties."""
+        predicate_clause = " AND e.predicate IN $predicates" if property_filters else ""
+        cypher = (
+            "MATCH (d:Disease {name: $name})-[:HAS_EVIDENCE]->(e:EvidenceClaim) "
+            "WHERE coalesce(e.review_status, 'unreviewed') <> 'unreviewed' "
+            f"{predicate_clause} "
+            "RETURN e.evidence_id AS evidence_id, d.name AS disease, "
+            "e.predicate AS predicate, e.claim AS claim, "
+            "e.source_name AS source_name, e.source_url AS source_url, "
+            "e.published_at AS updated_at, e.evidence_level AS evidence_level, "
+            "e.publisher AS publisher, e.document_title AS document_title, "
+            "e.section AS section, e.locator AS locator, "
+            "e.review_status AS review_status "
+            "ORDER BY CASE e.evidence_level "
+            "WHEN 'clinical_guideline' THEN 0 WHEN 'official_guidance' THEN 1 "
+            "WHEN 'systematic_review' THEN 2 ELSE 3 END, e.published_at DESC"
+        )
+        try:
+            return self.graph.run(
+                cypher, name=name, predicates=property_filters or []
+            ).data()
+        except Exception as exc:
+            # EvidenceClaim is an additive schema; old databases remain usable.
+            log.debug("权威证据查询不可用 [%s]: %s", name, exc)
+            return []
 
     # ==================================================================
     # 内部查询方法

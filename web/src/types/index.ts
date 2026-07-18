@@ -29,7 +29,7 @@ export interface GraphData {
 
 export interface EvidenceItem {
   id: string
-  kind: 'property' | 'relation'
+  kind: 'property' | 'relation' | 'claim'
   subject: string
   predicate: string
   object: string
@@ -38,6 +38,11 @@ export interface EvidenceItem {
   source_url: string
   updated_at: string
   evidence_level: string
+  publisher?: string
+  document_title?: string
+  section?: string
+  locator?: string
+  review_status?: string
 }
 
 export interface ChatResponse {

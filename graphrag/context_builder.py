@@ -56,6 +56,10 @@ class ContextBuilder:
         entities_found = subgraph.get("entities_found", [])
         nodes = {n["name"]: n for n in subgraph.get("nodes", [])}
         edges = subgraph.get("edges", [])
+        evidence_claims = subgraph.get("evidence_claims", [])
+        claims_by_entity: dict[str, list[dict]] = {}
+        for claim in evidence_claims:
+            claims_by_entity.setdefault(claim.get("disease", ""), []).append(claim)
 
         # 按源节点分组边
         entity_edges: dict[str, list[dict]] = {}
@@ -69,7 +73,7 @@ class ContextBuilder:
                 "evidence": edge.get("evidence", {}),
             })
 
-        evidence_items = self._build_evidence_items(nodes, edges)
+        evidence_items = self._build_evidence_items(nodes, edges, evidence_claims)
         citation_map = self._build_citation_map(evidence_items)
         sections: list[str] = []
 
@@ -79,7 +83,8 @@ class ContextBuilder:
             if not node:
                 continue
             section = self._build_entity_section(
-                name, node, entity_edges.get(name, []), citation_map
+                name, node, entity_edges.get(name, []), citation_map,
+                claims_by_entity.get(name, []),
             )
             if section:
                 sections.append(section)
@@ -90,7 +95,8 @@ class ContextBuilder:
                 continue
             if node.get("label") == "Disease" and node.get("properties"):
                 section = self._build_entity_section(
-                    name, node, entity_edges.get(name, []), citation_map
+                    name, node, entity_edges.get(name, []), citation_map,
+                    claims_by_entity.get(name, []),
                 )
                 if section:
                     sections.append(section)
@@ -114,15 +120,25 @@ class ContextBuilder:
         node: dict,
         edges: list[dict],
         citation_map: dict[tuple[str, str, str, str], int],
+        curated_claims: list[dict] | None = None,
     ) -> str:
         """构建单个实体的文本段落。"""
         label = node.get("label", "")
         lines = [f"【{label}】{name}"]
 
         # 属性
+        curated_claims = curated_claims or []
+        curated_predicates = {claim.get("predicate") for claim in curated_claims}
+        for claim in curated_claims:
+            value = str(claim.get("claim", ""))
+            citation = citation_map.get(("claim", name, claim.get("predicate", ""), value))
+            prop_label = PROP_LABELS.get(claim.get("predicate", ""), claim.get("predicate", ""))
+            suffix = f" [{citation}]" if citation else ""
+            lines.append(f"  {prop_label}: {value}{suffix}")
+
         props = node.get("properties", {})
         for key, value in props.items():
-            if not value:
+            if not value or key in curated_predicates:
                 continue
             prop_label = PROP_LABELS.get(key, key)
             if isinstance(value, list):
@@ -170,14 +186,35 @@ class ContextBuilder:
         return "\n".join(lines) if len(lines) > 1 else ""
 
     @staticmethod
-    def _build_evidence_items(nodes: dict[str, dict], edges: list[dict]) -> list[dict]:
+    def _build_evidence_items(
+        nodes: dict[str, dict], edges: list[dict], evidence_claims: list[dict] | None = None
+    ) -> list[dict]:
         items: list[dict] = []
         seen: set[str] = set()
         relation_counts: dict[tuple[str, str], int] = {}
+        curated_predicates: set[tuple[str, str]] = set()
+        for claim in evidence_claims or []:
+            evidence_id = str(claim.get("evidence_id", ""))
+            if not evidence_id or evidence_id in seen:
+                continue
+            seen.add(evidence_id)
+            subject = str(claim.get("disease", ""))
+            predicate = str(claim.get("predicate", ""))
+            curated_predicates.add((subject, predicate))
+            items.append({
+                "id": evidence_id,
+                "kind": "claim",
+                "subject": subject,
+                "predicate": predicate,
+                "object": str(claim.get("claim", "")),
+                **{key: value for key, value in claim.items() if key not in {
+                    "evidence_id", "disease", "predicate", "claim"
+                }},
+            })
         for name, node in nodes.items():
             metadata = node.get("evidence", {})
             for field, value in node.get("properties", {}).items():
-                if not value:
+                if not value or (name, field) in curated_predicates:
                     continue
                 evidence_id = f"property:{node.get('label', 'Node')}:{name}:{field}"
                 if evidence_id in seen:

@@ -66,6 +66,11 @@ class EvidenceItem(BaseModel):
     source_url: str = ""
     updated_at: str = "unknown"
     evidence_level: str = "legacy_unverified"
+    publisher: str = ""
+    document_title: str = ""
+    section: str = ""
+    locator: str = ""
+    review_status: str = "unreviewed"
 
 
 class ChatResponse(BaseModel):

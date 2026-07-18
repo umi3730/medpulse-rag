@@ -8,6 +8,8 @@ interface Props {
 const LEVEL_LABELS: Record<string, string> = {
   legacy_unverified: '历史数据 · 未核验',
   reviewed_reference: '已审核参考',
+  official_guidance: '国家机构指导原则',
+  clinical_guideline: '临床指南',
   guideline: '指南',
   systematic_review: '系统综述',
 }
@@ -89,6 +91,9 @@ export default function EvidenceList({ evidence = [] }: Props) {
                   <span className={item.evidence_level === 'legacy_unverified' ? 'text-amber-700' : 'text-[#397264]'}>
                     {level}
                   </span>
+                  {item.publisher && <span>{item.publisher}</span>}
+                  {item.section && <span>{item.section}{item.locator ? ` · ${item.locator}` : ''}</span>}
+                  {item.review_status === 'source_verified' && <span className="text-[#397264]">来源已核验</span>}
                 </div>
               </div>
             </li>

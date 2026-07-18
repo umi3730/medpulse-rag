@@ -149,6 +149,26 @@ npm run dev
 
 浏览器身份分为两级：`user_id` 保存在 `localStorage`，`session_id` 保存在 `sessionStorage`。后端所有 SQLite 和 Qdrant 查询同时按用户与会话隔离。
 
+### 权威医学证据
+
+旧 `data/medical.json` 仍作为兼容知识图谱使用，但默认标记为 `legacy_unverified`。新增权威资料采用独立的 `EvidenceClaim` 与 `EvidenceSource` 节点，不覆盖旧疾病属性；同一查询字段存在已核验 claim 时，GraphRAG 优先使用 claim，并展示发布机构、文档章节、定位信息和审核状态。
+
+统一证据记录至少包含疾病、字段、事实陈述、来源链接、发布机构、文档标题、发布日期、访问日期、证据等级和审核状态。`source_verified` 只表示来源与原文已核对，不等于临床专家审核；只有填写审核人和审核日期后才能标记为 `clinically_reviewed`。
+
+当前提供 5 条“高血压”样例，资料来自国家卫生健康委员会的[高血压患者健康管理服务](https://www.nhc.gov.cn/jws/qta/201408/d14a4aa1c33b4577a148f7e87f8ada44.shtml)与[高血压营养和运动指导原则（2024年版）](https://www.nhc.gov.cn/ylyjs/gzdt/202407/256b4eb8398440a8811344c7be50a333.shtml)。先执行只读校验：
+
+```powershell
+.\.venv\Scripts\python.exe knowledge_graph\evidence_importer.py data\evidence\hypertension.jsonl
+```
+
+确认目标 Neo4j 配置后再幂等导入：
+
+```powershell
+.\.venv\Scripts\python.exe knowledge_graph\evidence_importer.py data\evidence\hypertension.jsonl --apply
+```
+
+证据记录是对官方资料的结构化摘编，不能替代原文、医生诊断或临床审核。
+
 ## 评估
 
 主评估集包含 33 条问题，覆盖症状、病因、检查、用药、治疗、饮食、多意图、多轮追问、歧义澄清和高风险行为。
