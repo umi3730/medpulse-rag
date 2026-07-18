@@ -25,6 +25,14 @@ class ChatRequest(BaseModel):
     )
 
 
+class SessionRenameRequest(BaseModel):
+    user_id: str = Field(
+        "anonymous", min_length=1, max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+    )
+    title: str = Field(..., min_length=1, max_length=80)
+
+
 # ---- 响应子模型 ----
 class CypherQuery(BaseModel):
     cypher: str

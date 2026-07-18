@@ -10,6 +10,15 @@ export interface ChatSessionSummary {
   turn_count: number
   created_at: string
   updated_at: string
+  is_custom_title: boolean
+}
+
+export interface ChatSessionPage {
+  sessions: ChatSessionSummary[]
+  total: number
+  has_more: boolean
+  limit: number
+  offset: number
 }
 
 export interface ChatSessionTurn {
@@ -46,13 +55,36 @@ export async function fetchNeighbors(name: string, limit = 50): Promise<{ center
   return res.json()
 }
 
-export async function fetchChatSessions(limit = 30): Promise<ChatSessionSummary[]> {
+export async function fetchChatSessions(options: { limit?: number; offset?: number; query?: string } = {}): Promise<ChatSessionPage> {
   const { user_id } = getChatIdentity()
-  const params = new URLSearchParams({ user_id, limit: String(limit) })
+  const params = new URLSearchParams({
+    user_id,
+    limit: String(options.limit ?? 10),
+    offset: String(options.offset ?? 0),
+  })
+  if (options.query?.trim()) params.set('q', options.query.trim())
   const res = await fetch(`${BASE}/graphrag/sessions?${params}`)
   if (!res.ok) throw new Error(`请求失败: ${res.status}`)
-  const data = await res.json() as { sessions: ChatSessionSummary[] }
-  return data.sessions
+  return res.json()
+}
+
+export async function renameChatSession(sessionId: string, title: string): Promise<void> {
+  const { user_id } = getChatIdentity()
+  const res = await fetch(`${BASE}/graphrag/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id, title }),
+  })
+  if (!res.ok) throw new Error(`重命名失败: ${res.status}`)
+}
+
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  const { user_id } = getChatIdentity()
+  const params = new URLSearchParams({ user_id })
+  const res = await fetch(`${BASE}/graphrag/sessions/${encodeURIComponent(sessionId)}?${params}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error(`删除失败: ${res.status}`)
 }
 
 export async function fetchChatSession(sessionId: string): Promise<ChatSessionTurn[]> {

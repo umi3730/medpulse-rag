@@ -149,6 +149,15 @@ npm run dev
 
 浏览器身份分为两级：`user_id` 保存在 `localStorage`，`session_id` 保存在 `sessionStorage`。后端所有 SQLite 和 Qdrant 查询同时按用户与会话隔离。
 
+历史会话支持标题重命名、问答内容搜索和分页加载。删除会话时，后端使用同一组 `user_id + session_id` 同步删除 SQLite 中的会话元数据、完整轮次、历史实体，以及 Qdrant 中的语义记忆；相同 `session_id` 的其他用户数据不会受到影响。
+
+相关接口：
+
+- `GET /api/graphrag/sessions?user_id=...&q=...&limit=10&offset=0`
+- `GET /api/graphrag/sessions/{session_id}?user_id=...`
+- `PATCH /api/graphrag/sessions/{session_id}`
+- `DELETE /api/graphrag/sessions/{session_id}?user_id=...`
+
 ### 权威医学证据
 
 旧 `data/medical.json` 仍作为兼容知识图谱使用，但默认标记为 `legacy_unverified`。新增权威资料采用独立的 `EvidenceClaim` 与 `EvidenceSource` 节点，不覆盖旧疾病属性；同一查询字段存在已核验 claim 时，GraphRAG 优先使用 claim，并展示发布机构、文档章节、定位信息和审核状态。

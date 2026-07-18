@@ -1,11 +1,11 @@
 import { Suspense, lazy, useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { fetchChatSession, fetchChatSessions, streamGraphRAGChat } from '@/api/client'
+import { deleteChatSession, fetchChatSession, fetchChatSessions, renameChatSession, streamGraphRAGChat } from '@/api/client'
 import type { ChatSessionSummary } from '@/api/client'
 import { activateChatSession, getChatIdentity, startNewChatSession } from '@/lib/chatIdentity'
 import type { EvidenceItem, GraphRAGChatMessage, GraphRAGDebugInfo, GraphData } from '@/types'
 import EvidenceList from '@/components/EvidenceList'
-import { ArrowDown, ArrowUp, BrainCircuit, ChevronRight, GitBranch, History, Loader2, MessageSquarePlus, Network, Route, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, BrainCircuit, ChevronRight, GitBranch, History, Loader2, MessageSquarePlus, Network, Pencil, Route, Search, Trash2, X } from 'lucide-react'
 
 const MarkdownAnswer = lazy(() => import('@/components/MarkdownAnswer'))
 
@@ -40,6 +40,12 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState('')
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
+  const [sessionTotal, setSessionTotal] = useState(0)
+  const [sessionsHaveMore, setSessionsHaveMore] = useState(false)
+  const [historyQuery, setHistoryQuery] = useState('')
+  const [editingSessionId, setEditingSessionId] = useState('')
+  const [editingTitle, setEditingTitle] = useState('')
+  const [deletingSessionId, setDeletingSessionId] = useState('')
   const [activeSessionId, setActiveSessionId] = useState(() => getChatIdentity().session_id)
   const loadingRef = useRef(false)
   const scrollViewportRef = useRef<HTMLDivElement>(null)
@@ -94,22 +100,30 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
     viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
   }
 
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (reset = true, query = historyQuery, offset = 0) => {
     setHistoryLoading(true)
     setHistoryError('')
     try {
-      setSessions(await fetchChatSessions())
+      const page = await fetchChatSessions({ limit: 10, offset: reset ? 0 : offset, query })
+      setSessions(previous => reset ? page.sessions : [...previous, ...page.sessions])
+      setSessionTotal(page.total)
+      setSessionsHaveMore(page.has_more)
     } catch (error) {
       setHistoryError(error instanceof Error ? error.message : '历史会话加载失败')
     } finally {
       setHistoryLoading(false)
     }
-  }, [])
+  }, [historyQuery])
+
+  useEffect(() => {
+    if (!historyOpen) return
+    const timer = window.setTimeout(() => void loadSessions(true, historyQuery), 250)
+    return () => window.clearTimeout(timer)
+  }, [historyOpen, historyQuery, loadSessions])
 
   const handleToggleHistory = () => {
     const nextOpen = !historyOpen
     setHistoryOpen(nextOpen)
-    if (nextOpen) void loadSessions()
   }
 
   const handleOpenSession = async (sessionId: string) => {
@@ -147,6 +161,41 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
     setHistoryOpen(false)
     if (scrollViewportRef.current) scrollViewportRef.current.scrollTop = 0
     onSessionReset?.()
+  }
+
+  const handleRenameSession = async (sessionId: string) => {
+    const title = editingTitle.trim()
+    if (!title) return
+    setHistoryLoading(true)
+    setHistoryError('')
+    try {
+      await renameChatSession(sessionId, title)
+      setSessions(previous => previous.map(session => (
+        session.session_id === sessionId ? { ...session, title, is_custom_title: true } : session
+      )))
+      setEditingSessionId('')
+      setEditingTitle('')
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : '会话重命名失败')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  const handleDeleteSession = async (sessionId: string) => {
+    if (!window.confirm('确定删除这个会话吗？文字记录和语义记忆都会一并删除。')) return
+    setDeletingSessionId(sessionId)
+    setHistoryError('')
+    try {
+      await deleteChatSession(sessionId)
+      setSessions(previous => previous.filter(session => session.session_id !== sessionId))
+      setSessionTotal(previous => Math.max(0, previous - 1))
+      if (sessionId === activeSessionId) handleNewSession()
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : '会话删除失败')
+    } finally {
+      setDeletingSessionId('')
+    }
   }
 
   const handleSend = useCallback(async (question?: string) => {
@@ -306,7 +355,7 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
               <div>
                 <h2 className="text-sm font-semibold text-[#18231f]">历史会话</h2>
                 <p className="mt-0.5 text-[0.68rem] text-[#84918b]">
-                  {historyLoading ? '正在同步…' : `${sessions.length} 个会话`}
+                  {historyLoading ? '正在同步…' : `${sessionTotal} 个会话`}
                 </p>
               </div>
               <button
@@ -318,6 +367,23 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
               >
                 <X className="size-4" strokeWidth={1.8} />
               </button>
+            </div>
+
+            <div className="shrink-0 border-b border-[#e3eae6] px-4 py-3">
+              <label className="flex items-center gap-2 rounded-md border border-[#d7e1dc] bg-white px-3 py-2 focus-within:border-[#7ca598] focus-within:ring-2 focus-within:ring-[#dceae5]">
+                <Search className="size-3.5 shrink-0 text-[#89968f]" strokeWidth={1.8} />
+                <input
+                  value={historyQuery}
+                  onChange={event => setHistoryQuery(event.target.value)}
+                  placeholder="搜索标题或问答内容"
+                  className="min-w-0 flex-1 bg-transparent text-xs text-[#273832] outline-none placeholder:text-[#9aa6a1]"
+                />
+                {historyQuery && (
+                  <button type="button" onClick={() => setHistoryQuery('')} aria-label="清空搜索" className="text-[#8b9892] hover:text-[#42564e]">
+                    <X className="size-3" />
+                  </button>
+                )}
+              </label>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
@@ -351,32 +417,75 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
                   {sessions.map(session => {
                     const isActive = session.session_id === activeSessionId
                     return (
-                      <button
+                      <div
                         key={session.session_id}
-                        type="button"
-                        onClick={() => void handleOpenSession(session.session_id)}
-                        disabled={historyLoading}
-                        className={`group w-full px-3 py-3.5 text-left transition-colors disabled:cursor-wait disabled:opacity-60 ${
+                        className={`group relative px-3 py-3.5 transition-colors ${
                           isActive ? 'bg-[#eaf2ee]' : 'hover:bg-[#f0f5f2]'
                         }`}
                       >
                         <div className="flex items-start gap-3">
                           <span className={`mt-1 block size-1.5 shrink-0 rounded-full ${isActive ? 'bg-[#2f7665]' : 'bg-[#bdc9c4]'}`} />
                           <span className="min-w-0 flex-1">
-                            <span className={`block truncate text-xs font-medium ${isActive ? 'text-[#174f43]' : 'text-[#2e3d37]'}`}>
-                              {session.title || '未命名会话'}
-                            </span>
+                            {editingSessionId === session.session_id ? (
+                              <input
+                                autoFocus
+                                value={editingTitle}
+                                maxLength={80}
+                                onChange={event => setEditingTitle(event.target.value)}
+                                onKeyDown={event => {
+                                  if (event.key === 'Enter') void handleRenameSession(session.session_id)
+                                  if (event.key === 'Escape') setEditingSessionId('')
+                                }}
+                                onBlur={() => void handleRenameSession(session.session_id)}
+                                className="w-full rounded border border-[#86a99e] bg-white px-2 py-1 text-xs text-[#20352e] outline-none ring-2 ring-[#dceae5]"
+                              />
+                            ) : (
+                              <button type="button" onClick={() => void handleOpenSession(session.session_id)} disabled={historyLoading} className="block w-full pr-14 text-left disabled:cursor-wait disabled:opacity-60">
+                                <span className={`block truncate text-xs font-medium ${isActive ? 'text-[#174f43]' : 'text-[#2e3d37]'}`}>
+                                  {session.title || '未命名会话'}
+                                </span>
+                              </button>
+                            )}
                             <span className="mt-2 flex items-center justify-between gap-3 text-[0.65rem] text-[#8b9892]">
                               <span>{formatSessionDate(session.updated_at)}</span>
                               <span className="shrink-0">{session.turn_count} 轮</span>
                             </span>
                           </span>
-                          <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-[#a1ada8] transition-transform group-hover:translate-x-0.5 group-hover:text-[#397b6b]" />
+                          <div className="absolute right-2 top-2.5 flex items-center rounded bg-inherit opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                            <button
+                              type="button"
+                              onClick={() => { setEditingSessionId(session.session_id); setEditingTitle(session.title || '') }}
+                              aria-label={`重命名 ${session.title || '会话'}`}
+                              className="flex size-7 items-center justify-center text-[#74827c] hover:text-[#246353]"
+                            >
+                              <Pencil className="size-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteSession(session.session_id)}
+                              disabled={deletingSessionId === session.session_id}
+                              aria-label={`删除 ${session.title || '会话'}`}
+                              className="flex size-7 items-center justify-center text-[#74827c] hover:text-rose-600 disabled:opacity-50"
+                            >
+                              {deletingSessionId === session.session_id ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+                            </button>
+                          </div>
+                          {editingSessionId !== session.session_id && <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-[#a1ada8]" />}
                         </div>
-                      </button>
+                      </div>
                     )
                   })}
                 </div>
+              )}
+              {sessionsHaveMore && (
+                <button
+                  type="button"
+                  disabled={historyLoading}
+                  onClick={() => void loadSessions(false, historyQuery, sessions.length)}
+                  className="mt-3 w-full rounded-md border border-[#dbe4e0] py-2 text-xs text-[#527067] hover:bg-[#edf4f1] disabled:opacity-50"
+                >
+                  {historyLoading ? '加载中…' : '加载更多'}
+                </button>
               )}
             </div>
           </aside>

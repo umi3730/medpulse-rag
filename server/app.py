@@ -27,7 +27,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from server.models import (
-    ChatRequest, ChatResponse,
+    ChatRequest, ChatResponse, SessionRenameRequest,
     NeighborResponse, GraphData, GraphNode, GraphEdge, EvidenceItem,
     HealthResponse,
     GraphRAGChatResponse, GraphRAGDebugInfo,
@@ -184,14 +184,18 @@ async def clear_graphrag_memory(
 async def graphrag_sessions(
     user_id: str = Query("anonymous", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
     limit: int = Query(30, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    q: str = Query("", max_length=100),
 ):
     """List persisted GraphRAG sessions for one user."""
     bot = _get_graphrag_bot()
     if not bot or not getattr(bot, "memory_store", None):
-        return {"user_id": user_id, "sessions": []}
+        return {"user_id": user_id, "sessions": [], "total": 0, "has_more": False, "limit": limit, "offset": offset}
     return {
         "user_id": user_id,
-        "sessions": bot.memory_store.list_sessions(user_id=user_id, limit=limit),
+        **bot.memory_store.list_sessions(
+            user_id=user_id, limit=limit, offset=offset, query=q,
+        ),
     }
 
 
@@ -211,6 +215,46 @@ async def graphrag_session_history(
         "session_id": session_id,
         "turns": bot.memory_store.get_session_turns(user_id=user_id, session_id=session_id),
     }
+
+
+@app.patch("/api/graphrag/sessions/{session_id}")
+async def rename_graphrag_session(session_id: str, req: SessionRenameRequest):
+    """Rename one user-owned session."""
+    if not session_id or len(session_id) > 128 or not all(char.isalnum() or char in "_-" for char in session_id):
+        raise HTTPException(status_code=422, detail="Invalid session_id")
+    bot = _get_graphrag_bot()
+    if not bot or not getattr(bot, "memory_store", None):
+        raise HTTPException(status_code=503, detail="GraphRAG memory unavailable")
+    try:
+        updated = bot.memory_store.rename_session(
+            user_id=req.user_id, session_id=session_id, title=req.title,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"updated": True, "user_id": req.user_id, "session_id": session_id, "title": " ".join(req.title.split())[:80]}
+
+
+@app.delete("/api/graphrag/sessions/{session_id}")
+async def delete_graphrag_session(
+    session_id: str,
+    user_id: str = Query("anonymous", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+):
+    """Delete a user-owned session from SQLite and its semantic memories from Qdrant."""
+    if not session_id or len(session_id) > 128 or not all(char.isalnum() or char in "_-" for char in session_id):
+        raise HTTPException(status_code=422, detail="Invalid session_id")
+    bot = _get_graphrag_bot()
+    if not bot or not getattr(bot, "memory_store", None):
+        raise HTTPException(status_code=503, detail="GraphRAG memory unavailable")
+    vector_store = getattr(bot, "vector_store", None)
+    vector_result = {"cleared": False, "available": False}
+    if vector_store is not None:
+        vector_result = {"available": True, **vector_store.clear(user_id=user_id, session_id=session_id)}
+    deleted = bot.memory_store.delete_session(user_id=user_id, session_id=session_id)
+    if not deleted["sessions_deleted"]:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"deleted": True, **deleted, "vector": vector_result}
 
 
 @app.get("/api/graphrag/vector/stats")

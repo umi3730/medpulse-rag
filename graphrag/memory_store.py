@@ -63,12 +63,33 @@ class SQLiteMemoryStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_sessions (
+                    user_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, session_id)
+                )
+                """
+            )
             self._ensure_column(conn, "memory_turns", "user_id", "TEXT NOT NULL DEFAULT 'anonymous'")
             self._ensure_column(conn, "memory_turns", "memory_kind", "TEXT NOT NULL DEFAULT 'conversation'")
             self._ensure_column(conn, "memory_turns", "quality_status", "TEXT NOT NULL DEFAULT 'unverified'")
             self._ensure_column(conn, "memory_turns", "evidence_eligible", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "memory_entities", "user_id", "TEXT NOT NULL DEFAULT 'anonymous'")
             self._ensure_entity_identity_key(conn)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO chat_sessions
+                    (user_id, session_id, title, created_at, updated_at)
+                SELECT user_id, session_id, '', MIN(created_at), MAX(created_at)
+                FROM memory_turns
+                GROUP BY user_id, session_id
+                """
+            )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_memory_turns_user_session_created "
                 "ON memory_turns(user_id, session_id, created_at)"
@@ -146,6 +167,15 @@ class SQLiteMemoryStore:
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
+                INSERT INTO chat_sessions (user_id, session_id, title, created_at, updated_at)
+                VALUES (?, ?, '', ?, ?)
+                ON CONFLICT(user_id, session_id)
+                DO UPDATE SET updated_at = excluded.updated_at
+                """,
+                (user_id, session_id, now, now),
+            )
+            conn.execute(
+                """
                 INSERT INTO memory_turns
                     (user_id, session_id, question, answer, intents_json, entities_json,
                      memory_kind, quality_status, evidence_eligible, created_at)
@@ -217,8 +247,27 @@ class SQLiteMemoryStore:
         self,
         user_id: str = DEFAULT_USER_ID,
         limit: int = 30,
-    ) -> list[dict[str, Any]]:
+        offset: int = 0,
+        query: str = "",
+    ) -> dict[str, Any]:
+        clean_query = query.strip()
+        escaped_query = clean_query.replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped_query}%"
         with self._lock, self._connect() as conn:
+            total = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM chat_sessions AS sessions
+                WHERE sessions.user_id = ?
+                  AND (? = '' OR sessions.title LIKE ? ESCAPE '\\' OR EXISTS (
+                      SELECT 1 FROM memory_turns AS turns
+                      WHERE turns.user_id = sessions.user_id
+                        AND turns.session_id = sessions.session_id
+                        AND (turns.question LIKE ? ESCAPE '\\' OR turns.answer LIKE ? ESCAPE '\\')
+                  ))
+                """,
+                (user_id, clean_query, pattern, pattern, pattern),
+            ).fetchone()[0]
             rows = conn.execute(
                 """
                 WITH session_summary AS (
@@ -232,24 +281,78 @@ class SQLiteMemoryStore:
                     FROM memory_turns
                     WHERE user_id = ?
                     GROUP BY session_id
-                    ORDER BY last_turn_id DESC
-                    LIMIT ?
                 )
                 SELECT
                     summary.session_id,
                     summary.turn_count,
                     summary.created_at,
                     summary.updated_at,
-                    first_turn.question AS title,
+                    CASE WHEN sessions.title <> '' THEN sessions.title ELSE first_turn.question END AS title,
+                    sessions.title <> '' AS is_custom_title,
                     last_turn.question AS last_question
                 FROM session_summary AS summary
+                JOIN chat_sessions AS sessions
+                  ON sessions.user_id = ? AND sessions.session_id = summary.session_id
                 JOIN memory_turns AS first_turn ON first_turn.id = summary.first_turn_id
                 JOIN memory_turns AS last_turn ON last_turn.id = summary.last_turn_id
+                WHERE (? = '' OR sessions.title LIKE ? ESCAPE '\\'
+                    OR first_turn.question LIKE ? ESCAPE '\\'
+                    OR last_turn.question LIKE ? ESCAPE '\\'
+                    OR EXISTS (
+                        SELECT 1 FROM memory_turns AS searched
+                        WHERE searched.user_id = ?
+                          AND searched.session_id = summary.session_id
+                          AND (searched.question LIKE ? ESCAPE '\\' OR searched.answer LIKE ? ESCAPE '\\')
+                    ))
                 ORDER BY summary.last_turn_id DESC
+                LIMIT ? OFFSET ?
                 """,
-                (user_id, limit),
+                (
+                    user_id, user_id, clean_query, pattern, pattern, pattern,
+                    user_id, pattern, pattern, limit, offset,
+                ),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return {
+            "sessions": [dict(row) for row in rows],
+            "total": int(total),
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + len(rows) < total,
+        }
+
+    def rename_session(self, *, user_id: str, session_id: str, title: str) -> bool:
+        clean_title = " ".join(title.split()).strip()[:80]
+        if not clean_title:
+            raise ValueError("session title cannot be empty")
+        with self._lock, self._connect() as conn:
+            updated = conn.execute(
+                """
+                UPDATE chat_sessions SET title = ?, updated_at = ?
+                WHERE user_id = ? AND session_id = ?
+                """,
+                (clean_title, self._now(), user_id, session_id),
+            ).rowcount
+        return bool(updated)
+
+    def delete_session(self, *, user_id: str, session_id: str) -> dict[str, int]:
+        with self._lock, self._connect() as conn:
+            turn_count = conn.execute(
+                "DELETE FROM memory_turns WHERE user_id = ? AND session_id = ?",
+                (user_id, session_id),
+            ).rowcount
+            entity_count = conn.execute(
+                "DELETE FROM memory_entities WHERE user_id = ? AND session_id = ?",
+                (user_id, session_id),
+            ).rowcount
+            session_count = conn.execute(
+                "DELETE FROM chat_sessions WHERE user_id = ? AND session_id = ?",
+                (user_id, session_id),
+            ).rowcount
+        return {
+            "sessions_deleted": session_count,
+            "turns_deleted": turn_count,
+            "entities_deleted": entity_count,
+        }
 
     def get_session_turns(
         self,
@@ -340,16 +443,7 @@ class SQLiteMemoryStore:
         user_id: str = DEFAULT_USER_ID,
         session_id: str = DEFAULT_SESSION_ID,
     ) -> dict[str, int]:
-        with self._lock, self._connect() as conn:
-            turn_count = conn.execute(
-                "DELETE FROM memory_turns WHERE user_id = ? AND session_id = ?",
-                (user_id, session_id),
-            ).rowcount
-            entity_count = conn.execute(
-                "DELETE FROM memory_entities WHERE user_id = ? AND session_id = ?",
-                (user_id, session_id),
-            ).rowcount
-        return {"turns_deleted": turn_count, "entities_deleted": entity_count}
+        return self.delete_session(user_id=user_id, session_id=session_id)
 
     def snapshot(
         self,
