@@ -151,10 +151,14 @@ class SubgraphRetriever:
             f"{rel_clause} "
             "RETURN labels(n)[0] AS n_label, n.name AS n_name, "
             "type(r) AS r_type, labels(m)[0] AS m_label, m.name AS m_name, "
-            "coalesce(r.source_name, n.source_name, m.source_name) AS source_name, "
-            "coalesce(r.source_url, n.source_url, m.source_url) AS source_url, "
-            "coalesce(r.updated_at, n.updated_at, m.updated_at) AS updated_at, "
-            "coalesce(r.evidence_level, n.evidence_level, m.evidence_level) AS evidence_level "
+            "coalesce(properties(r)['source_name'], properties(n)['source_name'], "
+            "properties(m)['source_name']) AS source_name, "
+            "coalesce(properties(r)['source_url'], properties(n)['source_url'], "
+            "properties(m)['source_url']) AS source_url, "
+            "coalesce(properties(r)['updated_at'], properties(n)['updated_at'], "
+            "properties(m)['updated_at']) AS updated_at, "
+            "coalesce(properties(r)['evidence_level'], properties(n)['evidence_level'], "
+            "properties(m)['evidence_level']) AS evidence_level "
             "LIMIT $limit"
         )
         try:
@@ -192,8 +196,10 @@ class SubgraphRetriever:
         cypher = (
             "MATCH (n:Disease) WHERE n.name = $name "
             f"RETURN n.name AS name, {props_clause}, "
-            "n.source_name AS source_name, n.source_url AS source_url, "
-            "n.updated_at AS updated_at, n.evidence_level AS evidence_level"
+            "properties(n)['source_name'] AS source_name, "
+            "properties(n)['source_url'] AS source_url, "
+            "properties(n)['updated_at'] AS updated_at, "
+            "properties(n)['evidence_level'] AS evidence_level"
         )
         try:
             rows = self.graph.run(cypher, name=name).data()
