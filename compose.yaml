@@ -1,0 +1,67 @@
+name: medpulse
+
+services:
+  neo4j:
+    image: neo4j:${NEO4J_VERSION:-2026.06.0}
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${DOCKER_NEO4J_USER:-neo4j}/${DOCKER_NEO4J_PASSWORD:-medpulse-dev}
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u \"$${NEO4J_AUTH%%/*}\" -p \"$${NEO4J_AUTH#*/}\" 'RETURN 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  backend:
+    build:
+      context: .
+      args:
+        INSTALL_BGE: ${INSTALL_BGE:-false}
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${DOCKER_NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${DOCKER_NEO4J_PASSWORD:-medpulse-dev}
+      NEO4J_DATABASE: neo4j
+      MEMORY_DB_PATH: /app/runtime/memory.sqlite3
+      QDRANT_PATH: /app/runtime/qdrant
+      HF_HOME: /app/runtime/huggingface
+      EMBEDDING_PROVIDER: ${DOCKER_EMBEDDING_PROVIDER:-hash}
+      EMBEDDING_LOCAL_FILES_ONLY: ${EMBEDDING_LOCAL_FILES_ONLY:-true}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      LLM_BASE_URL: ${DOCKER_LLM_BASE_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - medpulse_runtime:/app/runtime
+    depends_on:
+      neo4j:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./web
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  medpulse_runtime:

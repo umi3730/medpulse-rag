@@ -23,6 +23,20 @@ React Web
 - Qdrant：BGE 编码的历史问题，只用于理解对话，不作为医学证据。
 - 前端：回答、行内引用、证据卡片、图谱和工作流调试信息。
 
+## 容器部署拓扑
+
+```text
+Browser :5173
+    |
+    v
+Nginx frontend -- /api --> FastAPI backend :8000 --> Neo4j :7687
+                              |
+                              +--> SQLite + embedded Qdrant (/app/runtime)
+                              +--> host or remote LLM API
+```
+
+Nginx 保持前后端同源并关闭 API 响应缓冲，以支持 SSE 流式回答。Compose 使用健康检查控制启动依赖；Neo4j、SQLite/Qdrant 分别使用命名卷持久化。权威证据文件保留在应用镜像中，运行时卷只挂载 `/app/runtime`，避免覆盖仓库内的 `data/evidence`。
+
 ## 可信回答链路
 
 ```text
