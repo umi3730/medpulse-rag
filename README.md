@@ -6,7 +6,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-GraphRAG-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)](https://react.dev/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Workflow-1C3C3C)](https://langchain-ai.github.io/langgraph/)
-[![Tests](https://img.shields.io/badge/backend_tests-53_passed-2F855A)](#测试与评估)
+[![Tests](https://img.shields.io/badge/backend_tests-56_passed-2F855A)](#测试与评估)
 
 知脉将医学实体抽取、Neo4j 子图检索、LangGraph 工作流、LLM 回答生成和持久化记忆组合为一套可解释的多轮问答系统。与只把检索文本交给模型的普通 RAG 不同，知脉会规划问题所需字段与关系、限制检索范围、为医学事实分配引用编号，并在输出前拦截没有证据支持的医学断言。
 
@@ -47,7 +47,7 @@
 | 引用完整率 | 1.0000 |
 | 引用忠实度代理指标 | 1.0000 |
 | 无依据断言拦截 | 1.0000 |
-| 后端自动化测试 | 53 项通过 |
+| 后端自动化测试 | 56 项通过 |
 | BGE 改写检索 Recall@1 | 1.00 |
 | 确定性哈希 Recall@1 | 0.50 |
 
@@ -319,7 +319,7 @@ MedPulse 主要新增和重构内容：
 - 用户隔离和完整会话管理。
 - 行内证据引用、无依据断言拦截和高风险安全兜底。
 - EvidenceClaim/EvidenceSource 权威证据模型。
-- 33 题评估集、Embedding 对比和 53 项自动化测试。
+- 33 题评估集、Embedding 对比和 56 项自动化测试。
 
 上游旧截图、爬虫和大体积数据不在本仓库分发。项目保留清晰致谢与数据边界，不将上游数据整理工作声明为原创成果。
 
