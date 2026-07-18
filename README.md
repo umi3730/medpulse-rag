@@ -13,6 +13,18 @@
 > [!CAUTION]
 > 本项目用于 GraphRAG 与医疗知识工程研究，不提供诊断、处方或个体化治疗建议。工程评估分数不等于临床正确率。
 
+## 效果预览
+
+### GraphRAG 问答与子图检索
+
+![MedPulse 多实体知识图谱问答](docs/assets/medpulse-graph.png)
+
+| 权威证据引用 | GraphRAG 工作台 |
+| --- | --- |
+| ![MedPulse 权威医学证据引用](docs/assets/medpulse-evidence.png) | ![MedPulse GraphRAG 工作台](docs/assets/medpulse-overview.png) |
+
+截图来自真实运行环境：左侧展示回答与可跳转引用，右侧展示检索子图、LangGraph 路由和上下文统计。示例医学内容仅用于知识检索演示。
+
 ## 项目亮点
 
 - **可观测 GraphRAG**：LangGraph 编排记忆加载、意图识别、实体处理、检索、上下文构建、生成、降级和记忆更新。
