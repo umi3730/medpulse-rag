@@ -4,9 +4,17 @@ import remarkGfm from 'remark-gfm'
 interface Props {
   content: string
   isError?: boolean
+  evidenceCount?: number
 }
 
-export default function MarkdownAnswer({ content, isError = false }: Props) {
+export default function MarkdownAnswer({ content, isError = false, evidenceCount = 0 }: Props) {
+  const linkedContent = content.replace(/\[(\d+)]/g, (match, rawIndex: string) => {
+    const index = Number(rawIndex)
+    return index >= 1 && index <= evidenceCount
+      ? `[[${index}]](#evidence-${index})`
+      : match
+  })
+
   return (
     <div className={`max-w-[65ch] text-[0.94rem] leading-7 text-pretty ${isError ? 'text-rose-800' : 'text-[#2f3d38]'}`}>
       <ReactMarkdown
@@ -29,8 +37,8 @@ export default function MarkdownAnswer({ content, isError = false }: Props) {
           a: ({ href, children }) => (
             <a
               href={href}
-              target="_blank"
-              rel="noreferrer"
+              target={href?.startsWith('#evidence-') ? undefined : '_blank'}
+              rel={href?.startsWith('#evidence-') ? undefined : 'noreferrer'}
               className="font-medium text-[#276255] underline decoration-[#a8c6bd] underline-offset-4 transition-colors hover:text-[#17483d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d9d91]"
             >
               {children}
@@ -57,7 +65,7 @@ export default function MarkdownAnswer({ content, isError = false }: Props) {
           hr: () => <hr className="my-5 border-0 border-t border-[#dbe4e0]" />,
         }}
       >
-        {content}
+        {linkedContent}
       </ReactMarkdown>
     </div>
   )

@@ -33,6 +33,7 @@ export interface EvidenceItem {
   subject: string
   predicate: string
   object: string
+  citation_index: number
   source_name: string
   source_url: string
   updated_at: string

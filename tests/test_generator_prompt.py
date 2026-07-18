@@ -2,10 +2,24 @@ from __future__ import annotations
 
 import unittest
 
-from graphrag.generator import GraphRAGGenerator, build_safe_fallback_answer
+from graphrag.generator import (
+    GraphRAGGenerator,
+    build_safe_fallback_answer,
+    sanitize_grounded_answer,
+)
 
 
 class GeneratorPromptTests(unittest.TestCase):
+    def test_grounding_filter_removes_uncited_medical_claim(self) -> None:
+        answer = sanitize_grounded_answer(
+            "高血压可能伴随头痛 [1]。感冒通常由病毒感染引起。"
+        )
+        self.assertEqual(answer, "高血压可能伴随头痛 [1]。")
+
+    def test_grounding_filter_keeps_citation_range(self) -> None:
+        answer = sanitize_grounded_answer("可见症状包括头痛、头晕 [1]-[4]。")
+        self.assertEqual(answer, "可见症状包括头痛、头晕 [1]-[4]。")
+
     def test_high_risk_dosage_fallback_is_not_prescriptive(self) -> None:
         answer = build_safe_fallback_answer(
             "降压药效果不好，我可以自己加量吗？",
@@ -67,6 +81,14 @@ class GeneratorPromptTests(unittest.TestCase):
         )
         self.assertIn("不能作为医学事实依据", prompt)
         self.assertIn("上一轮回答", prompt)
+
+    def test_prompt_requires_inline_evidence_citations(self) -> None:
+        prompt = GraphRAGGenerator.build_prompt(
+            "【Disease】高血压\n  症状: 头痛 [1]",
+            {"intent": "symptom", "requested_fields": ["has_symptom"]},
+        )
+        self.assertIn("事实陈述都必须紧跟对应编号", prompt)
+        self.assertIn("只能使用证据中已经出现的编号", prompt)
 
 
 if __name__ == "__main__":

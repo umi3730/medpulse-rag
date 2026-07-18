@@ -19,6 +19,29 @@ except ImportError:
 
 log = logging.getLogger("graphrag")
 
+_CITATION_RE = re.compile(r"\[(\d+)\](?:\s*[-–—]\s*\[(\d+)\])?")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?])|\n+")
+
+
+def sanitize_grounded_answer(answer: str) -> str:
+    """Remove generated medical statements that do not cite retrieved evidence."""
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", answer or "").strip()
+    if not cleaned:
+        return ""
+
+    grounded_parts: list[str] = []
+    for part in _SENTENCE_SPLIT_RE.split(cleaned):
+        part = part.strip()
+        if part and _CITATION_RE.search(part):
+            grounded_parts.append(part)
+    return "\n".join(grounded_parts).strip()
+
+
+def iter_answer_chunks(answer: str, chunk_size: int = 80):
+    """Yield reasonably sized chunks after grounding validation has completed."""
+    for start in range(0, len(answer), chunk_size):
+        yield answer[start:start + chunk_size]
+
 FIELD_LABELS = {
     "desc": "疾病简介",
     "cause": "病因",
@@ -114,7 +137,7 @@ class GraphRAGGenerator:
             ]
             resp = self.llm.invoke(messages)
             content = resp.content or ""
-            content = re.sub(r"<think>[\s\S]*?</think>", "", content).strip()
+            content = sanitize_grounded_answer(content)
             elapsed = (time.time() - t0) * 1000
             return {
                 "answer": content,
@@ -150,6 +173,7 @@ class GraphRAGGenerator:
         ]
 
         t0 = time.time()
+        raw_answer = ""
         in_think = False
         try:
             for chunk in self.llm.stream(messages):
@@ -163,9 +187,12 @@ class GraphRAGGenerator:
                     else:
                         continue
                 if text:
-                    yield text
+                    raw_answer += text
         except Exception as e:
             log.error("GraphRAG 流式生成失败: %s", e)
+
+        grounded_answer = sanitize_grounded_answer(raw_answer)
+        yield from iter_answer_chunks(grounded_answer)
 
         elapsed = round((time.time() - t0) * 1000, 1)
         yield {"generation_time_ms": elapsed, "model_used": getattr(self.llm, "model", "unknown")}

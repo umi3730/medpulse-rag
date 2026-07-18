@@ -69,6 +69,8 @@ class ContextBuilder:
                 "evidence": edge.get("evidence", {}),
             })
 
+        evidence_items = self._build_evidence_items(nodes, edges)
+        citation_map = self._build_citation_map(evidence_items)
         sections: list[str] = []
 
         # 1. 优先展示查询实体
@@ -76,7 +78,9 @@ class ContextBuilder:
             node = nodes.get(name)
             if not node:
                 continue
-            section = self._build_entity_section(name, node, entity_edges.get(name, []))
+            section = self._build_entity_section(
+                name, node, entity_edges.get(name, []), citation_map
+            )
             if section:
                 sections.append(section)
 
@@ -85,12 +89,13 @@ class ContextBuilder:
             if name in entities_found:
                 continue
             if node.get("label") == "Disease" and node.get("properties"):
-                section = self._build_entity_section(name, node, entity_edges.get(name, []))
+                section = self._build_entity_section(
+                    name, node, entity_edges.get(name, []), citation_map
+                )
                 if section:
                     sections.append(section)
 
         context_text = "\n\n".join(sections)
-        evidence_items = self._build_evidence_items(nodes, edges)
 
         # 截断
         if len(context_text) > MAX_CONTEXT_CHARS:
@@ -103,8 +108,13 @@ class ContextBuilder:
             "evidence_items": evidence_items,
         }
 
-    def _build_entity_section(self, name: str, node: dict,
-                              edges: list[dict]) -> str:
+    def _build_entity_section(
+        self,
+        name: str,
+        node: dict,
+        edges: list[dict],
+        citation_map: dict[tuple[str, str, str, str], int],
+    ) -> str:
         """构建单个实体的文本段落。"""
         label = node.get("label", "")
         lines = [f"【{label}】{name}"]
@@ -121,7 +131,9 @@ class ContextBuilder:
                 val_str = str(value)
             if len(val_str) > MAX_PROP_VALUE_LEN:
                 val_str = val_str[:MAX_PROP_VALUE_LEN] + "..."
-            lines.append(f"  {prop_label}: {val_str}")
+            citation = citation_map.get(("property", name, key, str(value)[:500]))
+            suffix = f" [{citation}]" if citation else ""
+            lines.append(f"  {prop_label}: {val_str}{suffix}")
 
         evidence = node.get("evidence", {})
         if evidence and props:
@@ -133,18 +145,24 @@ class ContextBuilder:
             )
 
         # 关系（按类型分组）
-        rel_groups: dict[str, list[str]] = {}
+        rel_groups: dict[str, list[tuple[str, int | None]]] = {}
         for edge in edges:
             rel = edge.get("relationship", "")
             target = edge.get("target", "")
             if target and target != name:
                 rel_groups.setdefault(rel, [])
-                if target not in rel_groups[rel]:
-                    rel_groups[rel].append(target)
+                citation = citation_map.get(("relation", name, rel, target))
+                if citation is None:
+                    citation = citation_map.get(("relation", target, rel, name))
+                if target not in {item[0] for item in rel_groups[rel]}:
+                    rel_groups[rel].append((target, citation))
 
         for rel, targets in rel_groups.items():
             rel_label = REL_LABELS.get(rel, rel)
-            display = " / ".join(targets[:MAX_TARGETS_PER_REL])
+            display = " / ".join(
+                f"{target} [{citation}]" if citation else target
+                for target, citation in targets[:MAX_TARGETS_PER_REL]
+            )
             if len(targets) > MAX_TARGETS_PER_REL:
                 display += f" ...共{len(targets)}项"
             lines.append(f"  {rel_label}: {display}")
@@ -194,4 +212,20 @@ class ContextBuilder:
                 "object": edge.get("target", ""),
                 **edge.get("evidence", {}),
             })
+        for index, item in enumerate(items, start=1):
+            item["citation_index"] = index
         return items
+
+    @staticmethod
+    def _build_citation_map(
+        evidence_items: list[dict],
+    ) -> dict[tuple[str, str, str, str], int]:
+        return {
+            (
+                str(item.get("kind", "")),
+                str(item.get("subject", "")),
+                str(item.get("predicate", "")),
+                str(item.get("object", "")),
+            ): int(item["citation_index"])
+            for item in evidence_items
+        }

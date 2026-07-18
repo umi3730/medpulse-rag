@@ -69,6 +69,9 @@ class EvidenceMetadataTests(unittest.TestCase):
         self.assertEqual({item["kind"] for item in items}, {"property", "relation"})
         self.assertTrue(all(item["source_name"] == "测试来源" for item in items))
         self.assertIn("证据元数据", result["context_text"])
+        self.assertEqual([item["citation_index"] for item in items], [1, 2])
+        self.assertIn("测试病因 [1]", result["context_text"])
+        self.assertIn("口渴 [2]", result["context_text"])
 
     def test_relation_evidence_matches_context_target_limit(self) -> None:
         edges = [

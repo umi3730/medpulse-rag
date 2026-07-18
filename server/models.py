@@ -61,6 +61,7 @@ class EvidenceItem(BaseModel):
     subject: str
     predicate: str
     object: str
+    citation_index: int = 0
     source_name: str = "寻医问药网历史数据集"
     source_url: str = ""
     updated_at: str = "unknown"

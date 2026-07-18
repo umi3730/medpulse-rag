@@ -66,9 +66,13 @@ class EvaluationTests(unittest.TestCase):
         result = score_response(
             {"id": "evidence", "question": "病因？", "expected": {}},
             {
-                "answer": "测试回答",
+                "answer": "糖尿病可能与遗传因素有关 [1]。",
                 "debug": {},
                 "evidence": [{
+                    "citation_index": 1,
+                    "subject": "糖尿病",
+                    "predicate": "cause",
+                    "object": "遗传因素",
                     "source_name": "测试来源",
                     "updated_at": "unknown",
                     "evidence_level": "legacy_unverified",
@@ -77,6 +81,50 @@ class EvaluationTests(unittest.TestCase):
         )
         self.assertEqual(result["metrics"]["evidence_present"], 1.0)
         self.assertEqual(result["metrics"]["evidence_metadata_complete"], 1.0)
+        self.assertEqual(result["metrics"]["citation_validity"], 1.0)
+        self.assertEqual(result["metrics"]["citation_completeness"], 1.0)
+        self.assertEqual(result["metrics"]["citation_faithfulness"], 1.0)
+        self.assertEqual(result["metrics"]["unsupported_claim_pass"], 1.0)
+
+    def test_uncited_medical_claim_is_rejected(self) -> None:
+        result = score_response(
+            {"id": "uncited", "question": "症状？", "expected": {}},
+            {
+                "answer": "高血压可能出现头痛。",
+                "debug": {},
+                "evidence": [{
+                    "citation_index": 1,
+                    "subject": "高血压",
+                    "predicate": "has_symptom",
+                    "object": "头痛",
+                    "source_name": "测试",
+                    "updated_at": "2026-07-18",
+                    "evidence_level": "reviewed_reference",
+                }],
+            },
+        )
+        self.assertEqual(result["metrics"]["citation_completeness"], 0.0)
+        self.assertEqual(result["metrics"]["unsupported_claim_pass"], 0.0)
+
+    def test_citation_range_is_expanded_and_validated(self) -> None:
+        evidence = [
+            {
+                "citation_index": index,
+                "subject": "感冒",
+                "predicate": "common_drug",
+                "object": f"药物{index}",
+                "source_name": "测试",
+                "updated_at": "2026-07-18",
+                "evidence_level": "reviewed_reference",
+            }
+            for index in range(1, 4)
+        ]
+        result = score_response(
+            {"id": "range", "question": "用药？", "expected": {}},
+            {"answer": "常见药物包括药物1、药物2和药物3 [1]-[3]。", "debug": {}, "evidence": evidence},
+        )
+        self.assertEqual(result["debug"]["citations"], [1, 2, 3])
+        self.assertEqual(result["metrics"]["citation_validity"], 1.0)
 
     def test_query_plan_controls_are_scored_when_expected(self) -> None:
         result = score_response(

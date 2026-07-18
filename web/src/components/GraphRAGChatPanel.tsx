@@ -462,7 +462,11 @@ export default function GraphRAGChatPanel({ onResponse, onSessionReset }: Props)
                             </p>
                           )}
                         >
-                          <MarkdownAnswer content={msg.content} isError={isError} />
+                          <MarkdownAnswer
+                            content={msg.content}
+                            isError={isError}
+                            evidenceCount={msg.evidence?.length ?? 0}
+                          />
                         </Suspense>
                         <EvidenceList evidence={msg.evidence} />
                       </div>

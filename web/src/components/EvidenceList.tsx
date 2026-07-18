@@ -35,6 +35,7 @@ const PREDICATE_LABELS: Record<string, string> = {
 
 export default function EvidenceList({ evidence = [] }: Props) {
   if (evidence.length === 0) return null
+  const legacyCount = evidence.filter((item) => item.evidence_level === 'legacy_unverified').length
 
   return (
     <details className="group mt-5 border-t border-[#dbe4e0] pt-3">
@@ -50,12 +51,17 @@ export default function EvidenceList({ evidence = [] }: Props) {
 
       <ol className="mt-3 divide-y divide-[#e1e8e5] border-y border-[#e1e8e5]">
         {evidence.map((item, index) => {
+          const citationIndex = item.citation_index || index + 1
           const predicate = PREDICATE_LABELS[item.predicate] || item.predicate
           const level = LEVEL_LABELS[item.evidence_level] || item.evidence_level
           return (
-            <li key={item.id} className="grid grid-cols-[1.6rem_minmax(0,1fr)] gap-2 py-3 first:pt-3">
+            <li
+              id={`evidence-${citationIndex}`}
+              key={item.id}
+              className="grid scroll-mt-24 grid-cols-[2.2rem_minmax(0,1fr)] gap-2 py-3 first:pt-3 target:bg-emerald-50/70"
+            >
               <span className="pt-0.5 font-mono text-[0.65rem] tabular-nums text-[#91a099]">
-                {String(index + 1).padStart(2, '0')}
+                [{citationIndex}]
               </span>
               <div className="min-w-0">
                 <p className="text-xs leading-5 text-[#32453e]">
@@ -89,6 +95,11 @@ export default function EvidenceList({ evidence = [] }: Props) {
           )
         })}
       </ol>
+      {legacyCount > 0 && (
+        <p className="mt-3 rounded-[4px] border border-amber-200 bg-amber-50 px-3 py-2 text-[0.68rem] leading-5 text-amber-800">
+          其中 {legacyCount} 条来自历史互联网数据，尚未经过临床审核；请勿据此自行诊断、用药或调整治疗。
+        </p>
+      )}
     </details>
   )
 }

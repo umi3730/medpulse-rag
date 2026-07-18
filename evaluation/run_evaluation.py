@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import time
 import urllib.error
@@ -18,6 +19,21 @@ STYLE_FORBIDDEN_TERMS = (
     "根据知识图谱",
     "根据提供的信息",
     "以上信息仅供参考，具体请咨询专业医生",
+)
+CITATION_RE = re.compile(r"\[(\d+)]")
+CITATION_RANGE_RE = re.compile(r"\[(\d+)]\s*[-–—]\s*\[(\d+)]")
+NON_CLAIM_MARKERS = (
+    "现有资料不足",
+    "现有图谱证据不足",
+    "请先告诉我",
+    "请补充具体",
+    "及时就医",
+    "联系开药医生",
+    "不要自行",
+    "不要擅自",
+    "未验证资料",
+    "未经临床审核",
+    "未核验资料",
 )
 
 
@@ -62,6 +78,87 @@ def _flatten_entities(entities: dict[str, Any]) -> set[str]:
     return values
 
 
+def _answer_sentences(answer: str) -> list[str]:
+    cleaned = re.sub(r"^\s*[-*]\s+", "", answer, flags=re.MULTILINE)
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[。！？])|\n+", cleaned)
+        if sentence.strip()
+    ]
+
+
+def _claim_sentences(answer: str) -> list[str]:
+    return [
+        sentence for sentence in _answer_sentences(answer)
+        if not any(marker in sentence for marker in NON_CLAIM_MARKERS)
+    ]
+
+
+def _bigrams(text: str) -> set[str]:
+    normalized = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", text.lower())
+    return {normalized[i:i + 2] for i in range(max(0, len(normalized) - 1))}
+
+
+def _citation_indices(text: str) -> list[int]:
+    indices = [int(value) for value in CITATION_RE.findall(text)]
+    for start_text, end_text in CITATION_RANGE_RE.findall(text):
+        start, end = int(start_text), int(end_text)
+        if 0 < start <= end and end - start <= 100:
+            indices.extend(range(start, end + 1))
+    return sorted(set(indices))
+
+
+def _citation_metrics(answer: str, evidence: list[dict], required: bool) -> dict[str, float | None]:
+    if not required:
+        return {
+            "citation_validity": None,
+            "citation_completeness": None,
+            "citation_faithfulness": None,
+            "unsupported_claim_pass": None,
+        }
+
+    valid_indices = {
+        int(item.get("citation_index") or index)
+        for index, item in enumerate(evidence, start=1)
+    }
+    all_citations = _citation_indices(answer)
+    citation_validity = (
+        sum(index in valid_indices for index in all_citations) / len(all_citations)
+        if all_citations else 0.0
+    )
+
+    claims = _claim_sentences(answer)
+    cited_claims = [sentence for sentence in claims if CITATION_RE.search(sentence)]
+    completeness = len(cited_claims) / len(claims) if claims else 1.0
+
+    evidence_by_index = {
+        int(item.get("citation_index") or index): item
+        for index, item in enumerate(evidence, start=1)
+    }
+    faithful: list[float] = []
+    for sentence in cited_claims:
+        sentence_terms = _bigrams(CITATION_RE.sub("", sentence))
+        cited_items = [
+            evidence_by_index[index]
+            for index in _citation_indices(sentence)
+            if index in evidence_by_index
+        ]
+        evidence_text = " ".join(
+            f"{item.get('subject', '')} {item.get('predicate', '')} {item.get('object', '')}"
+            for item in cited_items
+        )
+        evidence_terms = _bigrams(evidence_text)
+        overlap = len(sentence_terms & evidence_terms) / max(1, len(sentence_terms))
+        faithful.append(float(overlap >= 0.08))
+
+    return {
+        "citation_validity": citation_validity,
+        "citation_completeness": completeness,
+        "citation_faithfulness": statistics.fmean(faithful) if faithful else 0.0,
+        "unsupported_claim_pass": float(completeness == 1.0),
+    }
+
+
 def score_response(case: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
     expected = case.get("expected", {})
     debug = response.get("debug") or {}
@@ -87,6 +184,7 @@ def score_response(case: dict[str, Any], response: dict[str, Any]) -> dict[str, 
         if group
     ]
     forbidden_terms = [str(term) for term in expected.get("forbidden_terms", [])]
+    requires_evidence = bool(expected.get("requires_evidence", True))
 
     def exact_match(name: str, actual: Any) -> float | None:
         return float(actual == expected[name]) if name in expected else None
@@ -110,9 +208,7 @@ def score_response(case: dict[str, Any], response: dict[str, Any]) -> dict[str, 
         "style_template_pass": float(
             not any(term in answer for term in STYLE_FORBIDDEN_TERMS)
         ),
-        "evidence_present": (
-            float(bool(evidence)) if expected.get("requires_evidence", True) else None
-        ),
+        "evidence_present": float(bool(evidence)) if requires_evidence else None,
         "evidence_metadata_complete": (
             sum(
                 bool(item.get("source_name"))
@@ -131,6 +227,7 @@ def score_response(case: dict[str, Any], response: dict[str, Any]) -> dict[str, 
         "clarification_match": exact_match(
             "needs_clarification", bool(debug.get("needs_clarification", False))
         ),
+        **_citation_metrics(answer, evidence, requires_evidence),
     }
     scored_values = [value for value in metrics.values() if value is not None]
     overall = statistics.fmean(scored_values) if scored_values else 0.0
@@ -153,6 +250,7 @@ def score_response(case: dict[str, Any], response: dict[str, Any]) -> dict[str, 
             "total_time_ms": debug.get("total_time_ms", 0),
             "error": debug.get("error", ""),
             "evidence_count": len(evidence),
+            "citations": _citation_indices(answer),
         },
     }
 
